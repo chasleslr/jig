@@ -65,13 +65,12 @@ func (c *Cache) SavePlan(p *plan.Plan) error {
 		return fmt.Errorf("failed to write plan cache: %w", err)
 	}
 
-	// Also save the plan markdown
+	// Also save the plan markdown (use raw content to preserve original formatting)
 	mdPath := filepath.Join(c.dir, "plans", p.ID+".md")
-	mdData, err := plan.Serialize(p)
-	if err != nil {
-		return fmt.Errorf("failed to serialize plan markdown: %w", err)
+	if p.RawContent == "" {
+		return fmt.Errorf("plan has no raw content to save")
 	}
-	if err := os.WriteFile(mdPath, mdData, 0644); err != nil {
+	if err := os.WriteFile(mdPath, []byte(p.RawContent), 0644); err != nil {
 		return fmt.Errorf("failed to write plan markdown: %w", err)
 	}
 

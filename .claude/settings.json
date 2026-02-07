@@ -1,10 +1,26 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(go build:*)",
+      "Bash(go test:*)",
+      "Bash(golangci-lint:*)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {
         "hooks": [
           {
             "command": "werk hook exit-plan-mode",
+            "type": "command"
+          }
+        ],
+        "matcher": "ExitPlanMode"
+      },
+      {
+        "hooks": [
+          {
+            "command": "jig hook exit-plan-mode",
             "type": "command"
           }
         ],

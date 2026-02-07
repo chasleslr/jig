@@ -239,6 +239,62 @@ func extractAcceptanceCriteria(content string) []string {
 	return criteria
 }
 
+// ValidateStructure validates that the plan markdown has the required structure
+func ValidateStructure(data []byte) error {
+	// Parse frontmatter
+	var fm Frontmatter
+	rest, err := frontmatter.Parse(bytes.NewReader(data), &fm)
+	if err != nil {
+		return fmt.Errorf("failed to parse frontmatter: %w", err)
+	}
+
+	// Validate required frontmatter fields
+	var missing []string
+	if fm.ID == "" {
+		missing = append(missing, "id")
+	}
+	if fm.Title == "" {
+		missing = append(missing, "title")
+	}
+	if fm.Status == "" {
+		missing = append(missing, "status")
+	}
+	if fm.Author == "" {
+		missing = append(missing, "author")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("missing required frontmatter fields: %s", strings.Join(missing, ", "))
+	}
+
+	// Parse markdown body and validate required sections
+	body := string(rest)
+	sections := splitSections(body)
+
+	var foundProblem, foundSolution bool
+	for _, section := range sections {
+		headerLower := strings.ToLower(section.Header)
+		if strings.Contains(headerLower, "problem") {
+			foundProblem = true
+		}
+		if strings.Contains(headerLower, "solution") || strings.Contains(headerLower, "proposed") {
+			foundSolution = true
+		}
+	}
+
+	var missingSections []string
+	if !foundProblem {
+		missingSections = append(missingSections, "Problem Statement")
+	}
+	if !foundSolution {
+		missingSections = append(missingSections, "Proposed Solution")
+	}
+	if len(missingSections) > 0 {
+		return fmt.Errorf("missing required sections: %s", strings.Join(missingSections, ", "))
+	}
+
+	return nil
+}
+
 // Serialize converts a plan back to markdown with frontmatter
 func Serialize(plan *Plan) ([]byte, error) {
 	var buf bytes.Buffer
