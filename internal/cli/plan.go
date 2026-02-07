@@ -228,6 +228,11 @@ func runPlanSave(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no plan content provided")
 	}
 
+	// Validate the plan structure before parsing
+	if err := plan.ValidateStructure(content); err != nil {
+		return fmt.Errorf("invalid plan format: %w", err)
+	}
+
 	// Parse the plan
 	p, err := plan.Parse(content)
 	if err != nil {
