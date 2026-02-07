@@ -16,9 +16,10 @@ This skill guides you through creating a well-structured plan with:
 ## Usage
 
 ```bash
-/jig:plan                           # Use context from .jig/planning-context.md
-/jig:plan "Add user authentication" # Plan the specified goal
+/jig:plan <session-id>  # Use context from session-specific directory
 ```
+
+This skill is typically invoked automatically by `jig plan` with a session ID.
 
 ---
 
@@ -28,21 +29,24 @@ This skill guides you through creating a well-structured plan with:
 
 ### Step 0: Gather Context
 
-1. **Check for planning context** in `.jig/planning-context.md`:
+Context files are stored in a session-specific directory (`.jig/sessions/<session-id>/`) to support parallel planning sessions without conflicts.
+
+1. **Get the session ID from $ARGUMENTS**:
+   - The session ID is passed as the first argument
+   - If no session ID provided, use "default"
+
+2. **Read the planning context** from the session directory:
    ```bash
-   cat .jig/planning-context.md 2>/dev/null || echo "No planning context file"
+   # $ARGUMENTS contains the session ID
+   cat .jig/sessions/$ARGUMENTS/planning-context.md 2>/dev/null || echo "No planning context file"
    ```
 
-2. **Parse $ARGUMENTS**:
-   - If provided, use it as the planning goal (overrides context file)
-   - If empty, use the goal from `.jig/planning-context.md`
-
-3. **Check for issue context** in `.jig/issue-context.md`:
+3. **Read any issue context** from the session directory:
    ```bash
-   cat .jig/issue-context.md 2>/dev/null || echo "No issue context"
+   cat .jig/sessions/$ARGUMENTS/issue-context.md 2>/dev/null || echo "No issue context"
    ```
 
-If no context is found and no arguments provided, ask the user what they want to plan.
+If no context is found, ask the user what they want to plan.
 
 ### Step 1: Understand the Problem
 

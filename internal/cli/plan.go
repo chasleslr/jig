@@ -394,13 +394,17 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Prepare the runner context (writes planning context files to .jig/)
+	// Generate a unique session ID for parallel planning support
+	sessionID := fmt.Sprintf("%d", time.Now().UnixNano())
+
+	// Prepare the runner context (writes planning context files to .jig/sessions/<session-id>/)
 	prepOpts := &runner.PrepareOpts{
 		Plan:         p,
 		WorktreeDir:  cwd,
 		PromptType:   runner.PromptTypePlan,
 		PlanGoal:     planGoal,
 		IssueContext: issueContext,
+		SessionID:    sessionID,
 	}
 	if err := r.Prepare(ctx, prepOpts); err != nil {
 		return fmt.Errorf("failed to prepare runner: %w", err)
@@ -410,10 +414,11 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	// Launch the runner in plan mode with the /jig:plan skill
-	// The skill will read context from .jig/planning-context.md and .jig/issue-context.md
+	// Pass the session ID so the skill reads from the correct session directory
+	// This avoids race conditions when multiple planning sessions run in parallel
 	_, err = r.Launch(ctx, &runner.LaunchOpts{
 		WorktreeDir:   cwd,
-		InitialPrompt: "/jig:plan",
+		InitialPrompt: fmt.Sprintf("/jig:plan %s", sessionID),
 		Interactive:   true,
 		PlanMode:      true,
 	})

@@ -106,12 +106,25 @@ func (r *ClaudeRunner) Prepare(ctx context.Context, opts *PrepareOpts) error {
 	return nil
 }
 
-// writePlanningContext writes the planning-specific context files to .jig/
+// writePlanningContext writes the planning-specific context files to .jig/sessions/<session-id>/
+// The session ID is passed directly to the skill invocation to avoid race conditions
 func (r *ClaudeRunner) writePlanningContext(jigDir string, opts *PrepareOpts) error {
+	// Use session ID if provided, otherwise fall back to "default"
+	sessionID := opts.SessionID
+	if sessionID == "" {
+		sessionID = "default"
+	}
+
+	// Create session-specific directory for parallel planning support
+	sessionDir := filepath.Join(jigDir, "sessions", sessionID)
+	if err := os.MkdirAll(sessionDir, 0755); err != nil {
+		return fmt.Errorf("failed to create session directory: %w", err)
+	}
+
 	// Write planning goal context if provided
 	if opts.PlanGoal != "" {
 		content := fmt.Sprintf("# Planning Goal\n\n%s\n", opts.PlanGoal)
-		contextPath := filepath.Join(jigDir, "planning-context.md")
+		contextPath := filepath.Join(sessionDir, "planning-context.md")
 		if err := os.WriteFile(contextPath, []byte(content), 0644); err != nil {
 			return fmt.Errorf("failed to write planning context: %w", err)
 		}
@@ -119,7 +132,7 @@ func (r *ClaudeRunner) writePlanningContext(jigDir string, opts *PrepareOpts) er
 
 	// Write issue context if provided (from Linear, etc.)
 	if opts.IssueContext != "" {
-		contextPath := filepath.Join(jigDir, "issue-context.md")
+		contextPath := filepath.Join(sessionDir, "issue-context.md")
 		if err := os.WriteFile(contextPath, []byte(opts.IssueContext), 0644); err != nil {
 			return fmt.Errorf("failed to write issue context: %w", err)
 		}
