@@ -1,0 +1,365 @@
+package plan
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"regexp"
+	"strings"
+
+	"github.com/adrg/frontmatter"
+	"gopkg.in/yaml.v3"
+)
+
+// Frontmatter represents the YAML frontmatter of a plan document
+type Frontmatter struct {
+	ID        string    `yaml:"id"`
+	Title     string    `yaml:"title"`
+	Status    Status    `yaml:"status"`
+	Created   string    `yaml:"created"`
+	Author    string    `yaml:"author"`
+	Reviewers Reviewers `yaml:"reviewers"`
+	Phases    []struct {
+		ID        string      `yaml:"id"`
+		Title     string      `yaml:"title"`
+		IssueID   string      `yaml:"issue_id,omitempty"`
+		Status    PhaseStatus `yaml:"status"`
+		DependsOn []string    `yaml:"depends_on,omitempty"`
+	} `yaml:"phases"`
+}
+
+// ParseFile reads and parses a plan from a file
+func ParseFile(path string) (*Plan, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read plan file: %w", err)
+	}
+
+	plan, err := Parse(data)
+	if err != nil {
+		return nil, err
+	}
+	plan.FilePath = path
+	return plan, nil
+}
+
+// Parse parses a plan from markdown with frontmatter
+func Parse(data []byte) (*Plan, error) {
+	var fm Frontmatter
+	rest, err := frontmatter.Parse(bytes.NewReader(data), &fm)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse frontmatter: %w", err)
+	}
+
+	plan := &Plan{
+		ID:               fm.ID,
+		Title:            fm.Title,
+		Status:           fm.Status,
+		Author:           fm.Author,
+		Reviewers:        fm.Reviewers,
+		RawContent:       string(data),
+		QuestionsAnswers: make(map[string]string),
+		ReviewNotes:      make(map[ReviewerType]string),
+	}
+
+	// Parse created date
+	if fm.Created != "" {
+		// Try multiple date formats
+		// The time is stored in the frontmatter
+	}
+
+	// Convert phases
+	for _, ph := range fm.Phases {
+		phase := &Phase{
+			ID:        ph.ID,
+			Title:     ph.Title,
+			IssueID:   ph.IssueID,
+			Status:    ph.Status,
+			DependsOn: ph.DependsOn,
+		}
+		plan.Phases = append(plan.Phases, phase)
+	}
+
+	// Parse markdown body
+	body := string(rest)
+	parseMarkdownBody(plan, body)
+
+	return plan, nil
+}
+
+// parseMarkdownBody extracts structured content from the markdown
+func parseMarkdownBody(plan *Plan, body string) {
+	sections := splitSections(body)
+
+	for _, section := range sections {
+		headerLower := strings.ToLower(section.Header)
+
+		switch {
+		case strings.Contains(headerLower, "problem"):
+			plan.ProblemStatement = strings.TrimSpace(section.Content)
+
+		case strings.Contains(headerLower, "solution") || strings.Contains(headerLower, "proposed"):
+			plan.ProposedSolution = strings.TrimSpace(section.Content)
+
+		case strings.Contains(headerLower, "question") || strings.Contains(headerLower, "q&a"):
+			parseQA(plan, section.Content)
+
+		case strings.Contains(headerLower, "review"):
+			parseReviewNotes(plan, section.Content)
+
+		case strings.Contains(headerLower, "phase"):
+			// Phase details are already in frontmatter, but we can parse
+			// additional details from the body
+			parsePhaseDetails(plan, section.Content)
+		}
+	}
+}
+
+// Section represents a markdown section
+type Section struct {
+	Header  string
+	Level   int
+	Content string
+}
+
+// splitSections splits markdown into sections by headers
+func splitSections(body string) []Section {
+	var sections []Section
+
+	// Match markdown headers
+	headerRegex := regexp.MustCompile(`(?m)^(#{1,6})\s+(.+)$`)
+	matches := headerRegex.FindAllStringSubmatchIndex(body, -1)
+
+	for i, match := range matches {
+		level := match[3] - match[2] // Length of # characters
+		header := body[match[4]:match[5]]
+
+		// Content is from end of header to start of next header (or end)
+		contentStart := match[1]
+		contentEnd := len(body)
+		if i+1 < len(matches) {
+			contentEnd = matches[i+1][0]
+		}
+
+		content := strings.TrimSpace(body[contentStart:contentEnd])
+
+		sections = append(sections, Section{
+			Header:  header,
+			Level:   level,
+			Content: content,
+		})
+	}
+
+	return sections
+}
+
+// parseQA extracts Q&A pairs from a section
+func parseQA(plan *Plan, content string) {
+	// Look for Q: ... A: ... patterns
+	qaRegex := regexp.MustCompile(`(?m)\*\*Q:\s*(.+?)\*\*\s*\n\s*A:\s*(.+?)(?:\n\n|$)`)
+	matches := qaRegex.FindAllStringSubmatch(content, -1)
+
+	for _, match := range matches {
+		if len(match) >= 3 {
+			question := strings.TrimSpace(match[1])
+			answer := strings.TrimSpace(match[2])
+			plan.QuestionsAnswers[question] = answer
+		}
+	}
+}
+
+// parseReviewNotes extracts review notes by reviewer type
+func parseReviewNotes(plan *Plan, content string) {
+	sections := splitSections(content)
+
+	for _, section := range sections {
+		headerLower := strings.ToLower(section.Header)
+
+		switch {
+		case strings.Contains(headerLower, "lead"):
+			plan.ReviewNotes[ReviewerLead] = strings.TrimSpace(section.Content)
+		case strings.Contains(headerLower, "security"):
+			plan.ReviewNotes[ReviewerSecurity] = strings.TrimSpace(section.Content)
+		case strings.Contains(headerLower, "performance"):
+			plan.ReviewNotes[ReviewerPerformance] = strings.TrimSpace(section.Content)
+		case strings.Contains(headerLower, "accessibility"):
+			plan.ReviewNotes[ReviewerAccessibility] = strings.TrimSpace(section.Content)
+		}
+	}
+}
+
+// parsePhaseDetails extracts additional phase details from markdown body
+func parsePhaseDetails(plan *Plan, content string) {
+	// Look for phase subsections and acceptance criteria
+	sections := splitSections(content)
+
+	for _, section := range sections {
+		// Try to match phase by title
+		for _, phase := range plan.Phases {
+			if strings.Contains(strings.ToLower(section.Header), strings.ToLower(phase.Title)) {
+				phase.Description = extractDescription(section.Content)
+				phase.Acceptance = extractAcceptanceCriteria(section.Content)
+				break
+			}
+		}
+	}
+}
+
+// extractDescription extracts the description from phase content
+func extractDescription(content string) string {
+	// Description is text before "Acceptance Criteria" or similar headers
+	lines := strings.Split(content, "\n")
+	var desc []string
+
+	for _, line := range lines {
+		lineLower := strings.ToLower(line)
+		if strings.HasPrefix(line, "#") || strings.Contains(lineLower, "acceptance") {
+			break
+		}
+		desc = append(desc, line)
+	}
+
+	return strings.TrimSpace(strings.Join(desc, "\n"))
+}
+
+// extractAcceptanceCriteria extracts checkbox items as acceptance criteria
+func extractAcceptanceCriteria(content string) []string {
+	var criteria []string
+
+	// Match markdown checkboxes: - [ ] item or - [x] item
+	checkboxRegex := regexp.MustCompile(`(?m)^-\s*\[[x ]\]\s*(.+)$`)
+	matches := checkboxRegex.FindAllStringSubmatch(content, -1)
+
+	for _, match := range matches {
+		if len(match) >= 2 {
+			criteria = append(criteria, strings.TrimSpace(match[1]))
+		}
+	}
+
+	return criteria
+}
+
+// Serialize converts a plan back to markdown with frontmatter
+func Serialize(plan *Plan) ([]byte, error) {
+	var buf bytes.Buffer
+
+	// Write frontmatter
+	fm := Frontmatter{
+		ID:        plan.ID,
+		Title:     plan.Title,
+		Status:    plan.Status,
+		Created:   plan.Created.Format("2006-01-02T15:04:05Z"),
+		Author:    plan.Author,
+		Reviewers: plan.Reviewers,
+	}
+
+	for _, phase := range plan.Phases {
+		fm.Phases = append(fm.Phases, struct {
+			ID        string      `yaml:"id"`
+			Title     string      `yaml:"title"`
+			IssueID   string      `yaml:"issue_id,omitempty"`
+			Status    PhaseStatus `yaml:"status"`
+			DependsOn []string    `yaml:"depends_on,omitempty"`
+		}{
+			ID:        phase.ID,
+			Title:     phase.Title,
+			IssueID:   phase.IssueID,
+			Status:    phase.Status,
+			DependsOn: phase.DependsOn,
+		})
+	}
+
+	buf.WriteString("---\n")
+	yamlData, err := yaml.Marshal(fm)
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize frontmatter: %w", err)
+	}
+	buf.Write(yamlData)
+	buf.WriteString("---\n\n")
+
+	// Write title
+	buf.WriteString(fmt.Sprintf("# %s\n\n", plan.Title))
+
+	// Write problem statement
+	if plan.ProblemStatement != "" {
+		buf.WriteString("## Problem Statement\n\n")
+		buf.WriteString(plan.ProblemStatement)
+		buf.WriteString("\n\n")
+	}
+
+	// Write proposed solution
+	if plan.ProposedSolution != "" {
+		buf.WriteString("## Proposed Solution\n\n")
+		buf.WriteString(plan.ProposedSolution)
+		buf.WriteString("\n\n")
+	}
+
+	// Write phases
+	if len(plan.Phases) > 0 {
+		buf.WriteString("## Phases\n\n")
+		for _, phase := range plan.Phases {
+			buf.WriteString(fmt.Sprintf("### %s\n\n", phase.Title))
+
+			if len(phase.DependsOn) > 0 {
+				buf.WriteString(fmt.Sprintf("**Dependencies:** %s\n", strings.Join(phase.DependsOn, ", ")))
+			} else {
+				buf.WriteString("**Dependencies:** None\n")
+			}
+
+			if phase.Branch != "" {
+				buf.WriteString(fmt.Sprintf("**Branch:** `%s`\n", phase.Branch))
+			}
+			buf.WriteString("\n")
+
+			if len(phase.Acceptance) > 0 {
+				buf.WriteString("#### Acceptance Criteria\n\n")
+				for _, ac := range phase.Acceptance {
+					buf.WriteString(fmt.Sprintf("- [ ] %s\n", ac))
+				}
+				buf.WriteString("\n")
+			}
+
+			if phase.Description != "" {
+				buf.WriteString("#### Implementation Details\n\n")
+				buf.WriteString(phase.Description)
+				buf.WriteString("\n\n")
+			}
+		}
+	}
+
+	// Write Q&A
+	if len(plan.QuestionsAnswers) > 0 {
+		buf.WriteString("## Clarifying Questions & Answers\n\n")
+		for q, a := range plan.QuestionsAnswers {
+			buf.WriteString(fmt.Sprintf("**Q: %s**\n", q))
+			buf.WriteString(fmt.Sprintf("A: %s\n\n", a))
+		}
+	}
+
+	// Write review notes
+	if len(plan.ReviewNotes) > 0 {
+		buf.WriteString("## Review Notes\n\n")
+		for reviewer, notes := range plan.ReviewNotes {
+			buf.WriteString(fmt.Sprintf("### %s Review\n\n", strings.Title(string(reviewer))))
+			buf.WriteString(notes)
+			buf.WriteString("\n\n")
+		}
+	}
+
+	return buf.Bytes(), nil
+}
+
+// SaveFile writes a plan to a file
+func SaveFile(plan *Plan, path string) error {
+	data, err := Serialize(plan)
+	if err != nil {
+		return err
+	}
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("failed to write plan file: %w", err)
+	}
+
+	plan.FilePath = path
+	return nil
+}

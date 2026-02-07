@@ -1,0 +1,23 @@
+# Binary
+/jig
+bin/
+
+# Local state
+.jig/
+.claude/settings.local.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+
+# Test coverage
+coverage.out
+coverage.html
+
+# Build artifacts
+dist/
