@@ -56,6 +56,13 @@ func (r *ClaudeRunner) Prepare(ctx context.Context, opts *PrepareOpts) error {
 		return fmt.Errorf("failed to create .jig directory: %w", err)
 	}
 
+	// Handle planning-specific context files
+	if opts.PromptType == PromptTypePlan {
+		if err := r.writePlanningContext(jigDir, opts); err != nil {
+			return err
+		}
+	}
+
 	// Write the plan to .jig/plan.md if available
 	if opts.Plan != nil {
 		planContent, err := plan.Serialize(opts.Plan)
@@ -94,6 +101,28 @@ func (r *ClaudeRunner) Prepare(ctx context.Context, opts *PrepareOpts) error {
 	if err := r.copyClaudeCommands(opts.WorktreeDir); err != nil {
 		// Non-fatal - log but continue
 		fmt.Fprintf(os.Stderr, "Warning: could not copy Claude commands: %v\n", err)
+	}
+
+	return nil
+}
+
+// writePlanningContext writes the planning-specific context files to .jig/
+func (r *ClaudeRunner) writePlanningContext(jigDir string, opts *PrepareOpts) error {
+	// Write planning goal context if provided
+	if opts.PlanGoal != "" {
+		content := fmt.Sprintf("# Planning Goal\n\n%s\n", opts.PlanGoal)
+		contextPath := filepath.Join(jigDir, "planning-context.md")
+		if err := os.WriteFile(contextPath, []byte(content), 0644); err != nil {
+			return fmt.Errorf("failed to write planning context: %w", err)
+		}
+	}
+
+	// Write issue context if provided (from Linear, etc.)
+	if opts.IssueContext != "" {
+		contextPath := filepath.Join(jigDir, "issue-context.md")
+		if err := os.WriteFile(contextPath, []byte(opts.IssueContext), 0644); err != nil {
+			return fmt.Errorf("failed to write issue context: %w", err)
+		}
 	}
 
 	return nil
@@ -220,90 +249,6 @@ func (r *ClaudeRunner) Launch(ctx context.Context, opts *LaunchOpts) (*LaunchRes
 	}
 
 	return result, nil
-}
-
-// buildSkillContent generates the skill file content based on options
-func buildSkillContent(opts *PrepareOpts) string {
-	var content string
-
-	switch opts.PromptType {
-	case PromptTypePlan:
-		content = buildPlanSkill(opts)
-	case PromptTypeImplement:
-		content = buildImplementSkill(opts)
-	case PromptTypeReview:
-		content = buildReviewSkill(opts)
-	case PromptTypeLeadReview:
-		content = buildLeadReviewSkill(opts)
-	case PromptTypeSecurityReview:
-		content = buildSecurityReviewSkill(opts)
-	default:
-		content = "# Jig Context\n\nNo specific context provided.\n"
-	}
-
-	return content
-}
-
-func buildPlanSkill(opts *PrepareOpts) string {
-	content := `# Jig Planning Session
-
-You are helping create a detailed implementation plan for a software engineering task.
-`
-
-	// Add the user's goal if provided - this is the main input
-	if opts.PlanGoal != "" {
-		content += fmt.Sprintf(`
-## Task
-
-The user wants to plan the following:
-
-%s
-
-## Instructions
-
-Start immediately by analyzing this request and creating a comprehensive implementation plan.
-Ask clarifying questions if needed, but begin with your initial analysis.
-
-`, opts.PlanGoal)
-	}
-
-	// Add issue context if available (from Linear, etc.)
-	if opts.IssueContext != "" {
-		content += fmt.Sprintf(`
-## Issue Context
-
-%s
-
-## Instructions
-
-Start immediately by analyzing this issue and creating a comprehensive implementation plan.
-Ask clarifying questions if needed, but begin with your initial analysis.
-
-`, opts.IssueContext)
-	}
-
-	content += `## Plan Format
-
-Create a plan with:
-- A clear, concise title
-- Problem statement
-- Proposed solution
-- Phases (each independently implementable):
-  - Title and description
-  - Dependencies (if any)
-  - Acceptance criteria
-  - Implementation details
-
-## Guidelines
-
-1. **Understand the problem**: Ask clarifying questions if requirements are unclear
-2. **Break down into phases**: Each phase should be independently implementable
-3. **Define acceptance criteria**: Clear, testable criteria for each phase
-4. **Consider dependencies**: Identify which phases depend on others
-5. **Think about risks**: What could go wrong? How to mitigate?
-`
-
-	return content
 }
 
 func buildImplementSkill(opts *PrepareOpts) string {
