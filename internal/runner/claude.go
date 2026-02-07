@@ -219,6 +219,9 @@ func (r *ClaudeRunner) Launch(ctx context.Context, opts *LaunchOpts) (*LaunchRes
 	// Use plan mode for planning sessions
 	if opts.PlanMode {
 		args = append(args, "--permission-mode", "plan")
+	} else if opts.AutoAcceptEdits {
+		// Auto-accept file edits for implementation sessions
+		args = append(args, "--permission-mode", "acceptEdits")
 	}
 
 	// Add system prompt if provided
