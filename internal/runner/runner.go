@@ -33,13 +33,14 @@ type PrepareOpts struct {
 
 // LaunchOpts contains options for launching the external tool
 type LaunchOpts struct {
-	WorktreeDir   string
-	Prompt        string // For non-interactive mode (runs and exits)
-	InitialPrompt string // For interactive mode - sent as first message, then continues interactively
-	SystemPrompt  string // System prompt/instructions (for Claude: --system-prompt)
-	Interactive   bool
-	PlanMode      bool // Launch in plan mode (for Claude: --permission-mode plan)
-	Args          []string
+	WorktreeDir     string
+	Prompt          string // For non-interactive mode (runs and exits)
+	InitialPrompt   string // For interactive mode - sent as first message, then continues interactively
+	SystemPrompt    string // System prompt/instructions (for Claude: --system-prompt)
+	Interactive     bool
+	PlanMode        bool // Launch in plan mode (for Claude: --permission-mode plan)
+	AutoAcceptEdits bool // Auto-accept file edits (for Claude: --permission-mode acceptEdits)
+	Args            []string
 }
 
 // LaunchResult contains information about a completed session

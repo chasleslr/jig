@@ -35,15 +35,17 @@ After your implementation session, use 'gh pr create' to open a PR.`,
 }
 
 var (
-	implPhase    string
-	implRunner   string
-	implNoLaunch bool
+	implPhase        string
+	implRunner       string
+	implNoLaunch     bool
+	implNoAutoAccept bool
 )
 
 func init() {
 	implementCmd.Flags().StringVarP(&implPhase, "phase", "p", "", "specific phase to implement")
 	implementCmd.Flags().StringVarP(&implRunner, "runner", "r", "", "coding tool to use (default from config)")
 	implementCmd.Flags().BoolVar(&implNoLaunch, "no-launch", false, "set up worktree but don't launch tool")
+	implementCmd.Flags().BoolVar(&implNoAutoAccept, "no-auto-accept", false, "disable automatic acceptance of file edits")
 }
 
 func runImplement(cmd *cobra.Command, args []string) error {
@@ -275,9 +277,10 @@ func runImplement(cmd *cobra.Command, args []string) error {
 	// Launch the runner with the /jig:implement skill
 	// The skill will read the plan from .jig/plan.md
 	_, err = r.Launch(ctx, &runner.LaunchOpts{
-		WorktreeDir:   worktreePath,
-		InitialPrompt: fmt.Sprintf("/jig:implement %s", issueID),
-		Interactive:   true,
+		WorktreeDir:     worktreePath,
+		InitialPrompt:   fmt.Sprintf("/jig:implement %s", issueID),
+		Interactive:     true,
+		AutoAcceptEdits: !implNoAutoAccept,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to launch runner: %w", err)
