@@ -27,6 +27,7 @@ type PrepareOpts struct {
 	PromptType   PromptType
 	PlanGoal     string            // User's description of what they want to plan
 	IssueContext string            // Context from linked issue (Linear, etc.)
+	SessionID    string            // Unique session ID for parallel planning sessions
 	ExtraVars    map[string]string
 }
 

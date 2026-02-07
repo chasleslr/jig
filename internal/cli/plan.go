@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -59,81 +58,6 @@ var (
 	planNewRunner   string
 	planNewNoLaunch bool
 )
-
-// planSaveInstructions contains instructions for saving plans that will be included in the planning prompt
-const planSaveInstructions = `## Saving Your Plan
-
-When you've finished creating the plan, save it using the following command:
-
-` + "```" + `bash
-jig plan save plan.md
-` + "```" + `
-
-### Plan Format
-
-The plan must be a markdown file with YAML frontmatter:
-
-` + "```" + `markdown
----
-id: your-plan-id
-title: Your Plan Title
-status: draft
-author: username
-phases:
-  - id: phase-1
-    title: Phase 1 Title
-    status: pending
-    depends_on: []
-  - id: phase-2
-    title: Phase 2 Title
-    status: pending
-    depends_on: [phase-1]
----
-
-# Your Plan Title
-
-## Problem Statement
-
-[Description of the problem being solved]
-
-## Proposed Solution
-
-[High-level approach]
-
-## Phases
-
-### Phase 1: Phase 1 Title
-
-**Dependencies:** None
-
-#### Acceptance Criteria
-
-- [ ] Criterion 1
-- [ ] Criterion 2
-
-#### Implementation Details
-
-[Details for this phase]
-
-### Phase 2: Phase 2 Title
-
-**Dependencies:** Phase 1
-
-#### Acceptance Criteria
-
-- [ ] Criterion 1
-
-#### Implementation Details
-
-[Details for this phase]
-` + "```" + `
-
-### After Planning
-
-1. Write the plan to a file (e.g., ` + "`" + `plan.md` + "`" + `)
-2. Run ` + "`" + `jig plan save plan.md` + "`" + ` to save it to jig's cache
-3. The plan will then be available for implementation with ` + "`" + `jig implement <plan-id>` + "`" + `
-`
 
 var planSaveCmd = &cobra.Command{
 	Use:   "save [FILE]",
@@ -358,26 +282,6 @@ func runPlanList(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// getPlanIDFromContent extracts the plan ID from the content if present
-func getPlanIDFromContent(content string) string {
-	// Look for id: in frontmatter
-	lines := strings.Split(content, "\n")
-	inFrontmatter := false
-	for _, line := range lines {
-		if strings.TrimSpace(line) == "---" {
-			if inFrontmatter {
-				break
-			}
-			inFrontmatter = true
-			continue
-		}
-		if inFrontmatter && strings.HasPrefix(line, "id:") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "id:"))
-		}
-	}
-	return ""
-}
-
 func runPlanNew(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	cfg := config.Get()
@@ -490,11 +394,17 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Prepare the runner context (writes skill files)
+	// Generate a unique session ID for parallel planning support
+	sessionID := fmt.Sprintf("%d", time.Now().UnixNano())
+
+	// Prepare the runner context (writes planning context files to .jig/sessions/<session-id>/)
 	prepOpts := &runner.PrepareOpts{
-		Plan:        p,
-		WorktreeDir: cwd,
-		PromptType:  runner.PromptTypePlan,
+		Plan:         p,
+		WorktreeDir:  cwd,
+		PromptType:   runner.PromptTypePlan,
+		PlanGoal:     planGoal,
+		IssueContext: issueContext,
+		SessionID:    sessionID,
 	}
 	if err := r.Prepare(ctx, prepOpts); err != nil {
 		return fmt.Errorf("failed to prepare runner: %w", err)
@@ -503,29 +413,12 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 	printInfo(fmt.Sprintf("Launching %s for planning...", runnerName))
 	fmt.Println()
 
-	// Build the initial prompt with task, context, and save instructions
-	var promptBuilder strings.Builder
-	promptBuilder.WriteString("# Jig Planning Session\n\n")
-
-	if planGoal != "" {
-		promptBuilder.WriteString("## Task\n\n")
-		promptBuilder.WriteString(planGoal)
-		promptBuilder.WriteString("\n\n")
-	}
-
-	if issueContext != "" {
-		promptBuilder.WriteString("## Issue Context\n\n")
-		promptBuilder.WriteString(issueContext)
-		promptBuilder.WriteString("\n\n")
-	}
-
-	promptBuilder.WriteString(planSaveInstructions)
-	initialPrompt := promptBuilder.String()
-
-	// Launch the runner in plan mode
+	// Launch the runner in plan mode with the /jig:plan skill
+	// Pass the session ID so the skill reads from the correct session directory
+	// This avoids race conditions when multiple planning sessions run in parallel
 	_, err = r.Launch(ctx, &runner.LaunchOpts{
 		WorktreeDir:   cwd,
-		InitialPrompt: initialPrompt,
+		InitialPrompt: fmt.Sprintf("/jig:plan %s", sessionID),
 		Interactive:   true,
 		PlanMode:      true,
 	})
