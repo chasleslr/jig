@@ -22,18 +22,6 @@ var (
 	statusStyle = lipgloss.NewStyle().
 			Padding(0, 1).
 			Background(lipgloss.Color("235"))
-
-	phaseCompletedStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("10"))
-
-	phaseInProgressStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("11"))
-
-	phasePendingStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("240"))
-
-	phaseBlockedStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("9"))
 )
 
 // PlanViewModel displays a plan in a nice format
@@ -116,56 +104,12 @@ func (m PlanViewModel) View() string {
 		b.WriteString("\n\n")
 	}
 
-	// Problem Statement
-	if m.plan.ProblemStatement != "" {
-		b.WriteString(sectionStyle.Render("Problem Statement"))
-		b.WriteString("\n")
-		b.WriteString(wrapText(m.plan.ProblemStatement, 60))
-		b.WriteString("\n\n")
-	}
-
-	// Proposed Solution
-	if m.plan.ProposedSolution != "" {
-		b.WriteString(sectionStyle.Render("Proposed Solution"))
-		b.WriteString("\n")
-		b.WriteString(wrapText(m.plan.ProposedSolution, 60))
-		b.WriteString("\n\n")
-	}
-
-	// Phases
-	if len(m.plan.Phases) > 0 {
-		b.WriteString(sectionStyle.Render("Phases"))
-		b.WriteString("\n")
-
-		for i, phase := range m.plan.Phases {
-			icon, style := getPhaseStyle(phase.Status)
-			title := style.Render(fmt.Sprintf("%s %s", icon, phase.Title))
-			b.WriteString(fmt.Sprintf("%d. %s\n", i+1, title))
-
-			if len(phase.DependsOn) > 0 {
-				deps := phasePendingStyle.Render(fmt.Sprintf("   Dependencies: %s", strings.Join(phase.DependsOn, ", ")))
-				b.WriteString(deps)
-				b.WriteString("\n")
-			}
-
-			if len(phase.Acceptance) > 0 && phase.Status == plan.PhaseStatusInProgress {
-				b.WriteString("   Acceptance Criteria:\n")
-				for _, ac := range phase.Acceptance {
-					b.WriteString(fmt.Sprintf("     • %s\n", ac))
-				}
-			}
-		}
-		b.WriteString("\n")
-	}
-
-	// Q&A
-	if len(m.plan.QuestionsAnswers) > 0 {
-		b.WriteString(sectionStyle.Render("Q&A"))
-		b.WriteString("\n")
-
-		for q, a := range m.plan.QuestionsAnswers {
-			b.WriteString(fmt.Sprintf("Q: %s\n", q))
-			b.WriteString(fmt.Sprintf("A: %s\n\n", a))
+	// Full markdown body (preserving all content)
+	if m.plan.RawContent != "" {
+		body := extractMarkdownBody(m.plan.RawContent)
+		if body != "" {
+			b.WriteString(body)
+			b.WriteString("\n\n")
 		}
 	}
 
@@ -192,19 +136,6 @@ func formatPlanStatus(status plan.Status) string {
 	}
 }
 
-func getPhaseStyle(status plan.PhaseStatus) (string, lipgloss.Style) {
-	switch status {
-	case plan.PhaseStatusComplete:
-		return "✓", phaseCompletedStyle
-	case plan.PhaseStatusInProgress:
-		return "●", phaseInProgressStyle
-	case plan.PhaseStatusBlocked:
-		return "✗", phaseBlockedStyle
-	default:
-		return "○", phasePendingStyle
-	}
-}
-
 func renderProgressBar(percent float64, width int) string {
 	filled := int(percent / 100 * float64(width))
 	empty := width - filled
@@ -213,27 +144,28 @@ func renderProgressBar(percent float64, width int) string {
 	return lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render(bar)
 }
 
-func wrapText(text string, width int) string {
-	var result strings.Builder
-	var line strings.Builder
+// extractMarkdownBody extracts the markdown body from raw content (after frontmatter)
+func extractMarkdownBody(rawContent string) string {
+	// Look for the closing frontmatter delimiter "---"
+	// The frontmatter is between the first "---" and second "---"
+	const delimiter = "---"
 
-	words := strings.Fields(text)
-	for _, word := range words {
-		if line.Len()+len(word)+1 > width {
-			result.WriteString(line.String())
-			result.WriteString("\n")
-			line.Reset()
-		}
-		if line.Len() > 0 {
-			line.WriteString(" ")
-		}
-		line.WriteString(word)
-	}
-	if line.Len() > 0 {
-		result.WriteString(line.String())
+	// Find the first delimiter
+	firstIdx := strings.Index(rawContent, delimiter)
+	if firstIdx == -1 {
+		return rawContent // No frontmatter, return as-is
 	}
 
-	return result.String()
+	// Find the second delimiter (closing frontmatter)
+	rest := rawContent[firstIdx+len(delimiter):]
+	secondIdx := strings.Index(rest, delimiter)
+	if secondIdx == -1 {
+		return rawContent // Malformed frontmatter, return as-is
+	}
+
+	// Body starts after the second delimiter
+	body := rest[secondIdx+len(delimiter):]
+	return strings.TrimSpace(body)
 }
 
 // ShowPlan displays a plan in an interactive view
