@@ -58,6 +58,12 @@ func (m InputModel) WithWidth(width int) InputModel {
 	return m
 }
 
+// WithSecret sets the input to password mode (masks characters)
+func (m InputModel) WithSecret() InputModel {
+	m.textInput.EchoMode = textinput.EchoPassword
+	return m
+}
+
 // Init implements tea.Model
 func (m InputModel) Init() tea.Cmd {
 	return textinput.Blink
@@ -160,6 +166,42 @@ func RunInput(prompt string, defaultValue string) (string, error) {
 // RunInputWithValidation runs the input component with validation
 func RunInputWithValidation(prompt, defaultValue string, validate func(string) error) (string, error) {
 	m := NewInput(prompt, defaultValue).WithValidation(validate)
+	p := tea.NewProgram(m)
+
+	result, err := p.Run()
+	if err != nil {
+		return "", err
+	}
+
+	model := result.(InputModel)
+	if model.Cancelled() {
+		return "", nil
+	}
+
+	return model.Value(), nil
+}
+
+// RunSecretInput runs the input component in password mode
+func RunSecretInput(prompt string) (string, error) {
+	m := NewInput(prompt, "").WithSecret()
+	p := tea.NewProgram(m)
+
+	result, err := p.Run()
+	if err != nil {
+		return "", err
+	}
+
+	model := result.(InputModel)
+	if model.Cancelled() {
+		return "", nil
+	}
+
+	return model.Value(), nil
+}
+
+// RunSecretInputWithValidation runs secret input with validation
+func RunSecretInputWithValidation(prompt string, validate func(string) error) (string, error) {
+	m := NewInput(prompt, "").WithSecret().WithValidation(validate)
 	p := tea.NewProgram(m)
 
 	result, err := p.Run()

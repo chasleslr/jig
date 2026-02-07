@@ -6,23 +6,32 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/charleslr/jig/internal/ui"
 	"github.com/spf13/cobra"
 )
 
 var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Initialize jig in the current project",
-	Long: `Initialize jig in the current project by setting up Claude Code hooks.
+	Long: `Initialize jig in the current project.
 
-This command adds the necessary hook configuration to .claude/settings.json
-so that Claude prompts to save plans when exiting plan mode.`,
+In interactive mode, this runs a setup wizard that configures:
+- Issue tracker integration (Linear)
+- Git settings (branch patterns, worktree directory)
+- Claude Code hooks and skills
+
+In non-interactive mode (or with --hooks-only), only sets up Claude Code hooks.`,
 	RunE: runInit,
 }
 
-var initForce bool
+var (
+	initForce     bool
+	initHooksOnly bool
+)
 
 func init() {
 	initCmd.Flags().BoolVarP(&initForce, "force", "f", false, "overwrite existing hook configuration")
+	initCmd.Flags().BoolVar(&initHooksOnly, "hooks-only", false, "only install Claude Code hooks, skip full setup")
 }
 
 // ClaudeSettings represents the .claude/settings.json structure
@@ -47,6 +56,46 @@ type HookConfig struct {
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
+	// If interactive and not hooks-only, run full onboarding
+	if ui.IsInteractive() && !initHooksOnly {
+		return runInteractiveInit()
+	}
+
+	// Otherwise, just set up hooks (non-interactive mode)
+	return runHooksOnlyInit()
+}
+
+// runInteractiveInit runs the full interactive onboarding wizard
+func runInteractiveInit() error {
+	result, err := RunOnboarding()
+	if err != nil {
+		return err
+	}
+
+	if result == nil {
+		// User cancelled
+		return nil
+	}
+
+	// Save the configuration
+	if err := SaveOnboardingResult(result); err != nil {
+		return fmt.Errorf("failed to save configuration: %w", err)
+	}
+
+	// Install Claude skills if requested
+	if result.InstallSkills {
+		if err := InstallClaudeSkills(); err != nil {
+			printWarning(fmt.Sprintf("Could not install Claude skills: %v", err))
+		} else {
+			printSuccess("Claude Code hooks installed")
+		}
+	}
+
+	return nil
+}
+
+// runHooksOnlyInit sets up only the Claude Code hooks
+func runHooksOnlyInit() error {
 	// Ensure .claude directory exists
 	claudeDir := ".claude"
 	if err := os.MkdirAll(claudeDir, 0755); err != nil {
