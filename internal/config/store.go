@@ -30,6 +30,11 @@ func NewStore() (*Store, error) {
 	return &Store{path: credPath}, nil
 }
 
+// NewStoreWithPath creates a credential store with a custom path (for testing)
+func NewStoreWithPath(path string) *Store {
+	return &Store{path: path}
+}
+
 // Load reads credentials from the store
 func (s *Store) Load() (*Credentials, error) {
 	data, err := os.ReadFile(s.path)

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1119,6 +1120,146 @@ func TestGetPlanSyncer_UnknownTracker(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unknown tracker") {
 		t.Errorf("error should mention unknown tracker, got: %v", err)
+	}
+}
+
+func TestGetPlanSyncer_LinearWithStoreAPIKey(t *testing.T) {
+	// Create temp directory for credential store
+	tempDir, err := os.MkdirTemp("", "jig-syncer-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Create a store with an API key
+	credPath := filepath.Join(tempDir, ".credentials")
+	store := config.NewStoreWithPath(credPath)
+	if err := store.SetLinearAPIKey("test-api-key-from-store"); err != nil {
+		t.Fatalf("failed to set API key: %v", err)
+	}
+
+	// Override storeFactory for this test
+	oldFactory := storeFactory
+	storeFactory = func() (*config.Store, error) {
+		return config.NewStoreWithPath(credPath), nil
+	}
+	defer func() { storeFactory = oldFactory }()
+
+	cfg := &config.Config{
+		Default: config.DefaultConfig{
+			Tracker: "linear",
+		},
+		Linear: config.LinearConfig{
+			TeamID:         "team-123",
+			DefaultProject: "project-456",
+		},
+	}
+
+	syncer, err := getPlanSyncer(cfg)
+	if err != nil {
+		t.Fatalf("getPlanSyncer() error = %v", err)
+	}
+	if syncer == nil {
+		t.Error("getPlanSyncer() returned nil syncer")
+	}
+}
+
+func TestGetPlanSyncer_LinearWithConfigAPIKey(t *testing.T) {
+	// Create temp directory for credential store (empty)
+	tempDir, err := os.MkdirTemp("", "jig-syncer-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Create an empty store (no API key)
+	credPath := filepath.Join(tempDir, ".credentials")
+
+	// Override storeFactory for this test
+	oldFactory := storeFactory
+	storeFactory = func() (*config.Store, error) {
+		return config.NewStoreWithPath(credPath), nil
+	}
+	defer func() { storeFactory = oldFactory }()
+
+	cfg := &config.Config{
+		Default: config.DefaultConfig{
+			Tracker: "linear",
+		},
+		Linear: config.LinearConfig{
+			APIKey:         "test-api-key-from-config",
+			TeamID:         "team-123",
+			DefaultProject: "project-456",
+		},
+	}
+
+	syncer, err := getPlanSyncer(cfg)
+	if err != nil {
+		t.Fatalf("getPlanSyncer() error = %v", err)
+	}
+	if syncer == nil {
+		t.Error("getPlanSyncer() returned nil syncer")
+	}
+}
+
+func TestGetPlanSyncer_LinearNoAPIKey(t *testing.T) {
+	// Create temp directory for credential store (empty)
+	tempDir, err := os.MkdirTemp("", "jig-syncer-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Create an empty store (no API key)
+	credPath := filepath.Join(tempDir, ".credentials")
+
+	// Override storeFactory for this test
+	oldFactory := storeFactory
+	storeFactory = func() (*config.Store, error) {
+		return config.NewStoreWithPath(credPath), nil
+	}
+	defer func() { storeFactory = oldFactory }()
+
+	cfg := &config.Config{
+		Default: config.DefaultConfig{
+			Tracker: "linear",
+		},
+		Linear: config.LinearConfig{
+			// No API key in config either
+			TeamID:         "team-123",
+			DefaultProject: "project-456",
+		},
+	}
+
+	_, err = getPlanSyncer(cfg)
+	if err == nil {
+		t.Error("getPlanSyncer() should return error when no API key configured")
+	}
+	if !strings.Contains(err.Error(), "API key not configured") {
+		t.Errorf("error should mention API key not configured, got: %v", err)
+	}
+}
+
+func TestGetPlanSyncer_StoreError(t *testing.T) {
+	// Override storeFactory to return an error
+	oldFactory := storeFactory
+	storeFactory = func() (*config.Store, error) {
+		return nil, fmt.Errorf("store creation failed")
+	}
+	defer func() { storeFactory = oldFactory }()
+
+	cfg := &config.Config{
+		Default: config.DefaultConfig{
+			Tracker: "linear",
+		},
+	}
+
+	_, err := getPlanSyncer(cfg)
+	if err == nil {
+		t.Error("getPlanSyncer() should return error when store creation fails")
+	}
+	if !strings.Contains(err.Error(), "store creation failed") {
+		t.Errorf("error should mention store creation failed, got: %v", err)
 	}
 }
 

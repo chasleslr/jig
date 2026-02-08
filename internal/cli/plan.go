@@ -656,11 +656,16 @@ func getTracker(cfg *config.Config) (tracker.Tracker, error) {
 	}
 }
 
+// storeFactory is used to create credential stores (can be overridden in tests)
+var storeFactory = func() (*config.Store, error) {
+	return config.NewStore()
+}
+
 // getPlanSyncer returns a PlanSyncer for the configured tracker
 func getPlanSyncer(cfg *config.Config) (state.PlanSyncer, error) {
 	switch cfg.Default.Tracker {
 	case "linear":
-		store, err := config.NewStore()
+		store, err := storeFactory()
 		if err != nil {
 			return nil, err
 		}
