@@ -9,9 +9,8 @@ Create a comprehensive implementation plan for a software engineering task.
 
 This skill guides you through creating a well-structured plan with:
 - Problem statement and proposed solution
-- Phased implementation approach
-- Acceptance criteria for each phase
-- Dependency tracking between phases
+- Clear acceptance criteria
+- Implementation details
 
 ## Usage
 
@@ -68,8 +67,8 @@ Before creating a plan:
 Think through:
 
 1. **High-level approach**: What's the overall strategy?
-2. **Phased breakdown**: How can this be split into independent, deliverable phases?
-3. **Dependencies**: Which phases depend on others?
+2. **Acceptance criteria**: What conditions must be met for success?
+3. **Implementation details**: What specific changes are needed?
 4. **Risks**: What could go wrong? How to mitigate?
 
 ### Step 3: Write the Plan
@@ -82,15 +81,8 @@ id: <plan-id>
 title: <Plan Title>
 status: draft
 author: <username>
-phases:
-  - id: phase-1
-    title: <Phase 1 Title>
-    status: pending
-    depends_on: []
-  - id: phase-2
-    title: <Phase 2 Title>
-    status: pending
-    depends_on: [phase-1]
+reviewers:
+  default: [lead]
 ---
 
 # <Plan Title>
@@ -103,32 +95,15 @@ phases:
 
 <High-level approach to solving the problem>
 
-## Phases
-
-### <Phase 1 Title>
-
-**Dependencies:** None
-
-#### Acceptance Criteria
+## Acceptance Criteria
 
 - [ ] Criterion 1
 - [ ] Criterion 2
+- [ ] Criterion 3
 
-#### Implementation Details
+## Implementation Details
 
-<Specific details for implementing this phase>
-
-### <Phase 2 Title>
-
-**Dependencies:** Phase 1
-
-#### Acceptance Criteria
-
-- [ ] Criterion 1
-
-#### Implementation Details
-
-<Specific details for implementing this phase>
+<Specific details for implementing this plan>
 ```
 
 ### Step 4: Plan Guidelines
@@ -136,11 +111,10 @@ phases:
 Follow these principles:
 
 1. **Be specific**: Vague plans lead to vague implementations
-2. **Keep phases small**: Each phase should be completable in one session
+2. **Keep it focused**: Each plan should address a single coherent goal
 3. **Define clear acceptance criteria**: Testable conditions that define "done"
 4. **Consider testing**: Include test requirements in acceptance criteria
-5. **Document dependencies**: Make phase ordering explicit
-6. **Avoid over-engineering**: Plan what's needed, not what might be needed
+5. **Avoid over-engineering**: Plan what's needed, not what might be needed
 
 ### Step 5: Save the Plan
 
@@ -173,22 +147,14 @@ This will validate and cache the plan for implementation with `jig implement <pl
 | `title` | Yes | Human-readable title |
 | `status` | Yes | One of: `draft`, `approved`, `in_progress`, `completed` |
 | `author` | Yes | Username of the plan author |
-| `phases` | Yes | Array of phase definitions |
-
-### Phase Fields
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `id` | Yes | Unique phase identifier (e.g., `phase-1`) |
-| `title` | Yes | Human-readable phase title |
-| `status` | Yes | One of: `pending`, `in_progress`, `complete` |
-| `depends_on` | No | Array of phase IDs this phase depends on |
+| `reviewers` | No | Map of reviewer types to usernames |
 
 ### Body Sections
 
 1. **Problem Statement**: What problem are we solving and why?
 2. **Proposed Solution**: High-level approach (not implementation details)
-3. **Phases**: Detailed breakdown with acceptance criteria and implementation details
+3. **Acceptance Criteria**: Testable conditions that define success
+4. **Implementation Details**: Specific changes needed to implement the plan
 
 ---
 
@@ -207,5 +173,5 @@ This will validate and cache the plan for implementation with `jig implement <pl
 1. **Understand before planning**: Ask questions first, plan second
 2. **Explore the codebase**: Don't plan in a vacuum - understand existing patterns
 3. **Get user buy-in**: Present drafts and iterate based on feedback
-4. **Keep it actionable**: Every phase should be clearly implementable
+4. **Keep it actionable**: Every part of the plan should be clearly implementable
 5. **Save properly**: Always use `jig plan save` to cache the final plan
