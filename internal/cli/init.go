@@ -36,9 +36,14 @@ func init() {
 
 // ClaudeSettings represents the .claude/settings.json structure
 type ClaudeSettings struct {
-	Hooks *ClaudeHooks `json:"hooks,omitempty"`
+	Hooks       *ClaudeHooks `json:"hooks,omitempty"`
+	Permissions *Permissions `json:"permissions,omitempty"`
 	// Preserve other fields
 	Other map[string]interface{} `json:"-"`
+}
+
+type Permissions struct {
+	Allow []string `json:"allow,omitempty"`
 }
 
 type ClaudeHooks struct {
@@ -141,6 +146,9 @@ func runHooksOnlyInit() error {
 	hooks["PreToolUse"] = preToolUse
 	rawSettings["hooks"] = hooks
 
+	// Add permissions for jig commands
+	addJigPermissions(rawSettings)
+
 	// Write back
 	data, err := json.MarshalIndent(rawSettings, "", "  ")
 	if err != nil {
@@ -155,6 +163,7 @@ func runHooksOnlyInit() error {
 	fmt.Println()
 	fmt.Println("Added to .claude/settings.json:")
 	fmt.Println("  - PreToolUse hook for ExitPlanMode")
+	fmt.Println("  - Permissions for jig commands (auto-approved)")
 	fmt.Println()
 	fmt.Println("When you exit plan mode, Claude will now prompt you to save your plan.")
 	fmt.Println()
@@ -252,4 +261,43 @@ func filterNonJigHooks(preToolUse interface{}) []interface{} {
 	}
 
 	return filtered
+}
+
+// jigPermissions are the Bash command permissions needed for jig hooks to work seamlessly
+var jigPermissions = []string{
+	"Bash(jig plan save:*)",
+	"Bash(jig hook mark-skip-save:*)",
+	"Bash(jig hook mark-plan-saved:*)",
+}
+
+// addJigPermissions adds jig-specific permissions to the settings
+func addJigPermissions(settings map[string]interface{}) {
+	permissions, ok := settings["permissions"].(map[string]interface{})
+	if !ok {
+		permissions = make(map[string]interface{})
+		settings["permissions"] = permissions
+	}
+
+	allowList, ok := permissions["allow"].([]interface{})
+	if !ok {
+		allowList = []interface{}{}
+	}
+
+	// Convert to string set for deduplication
+	existing := make(map[string]bool)
+	for _, item := range allowList {
+		if s, ok := item.(string); ok {
+			existing[s] = true
+		}
+	}
+
+	// Add jig permissions if not already present
+	for _, perm := range jigPermissions {
+		if !existing[perm] {
+			allowList = append(allowList, perm)
+			existing[perm] = true
+		}
+	}
+
+	permissions["allow"] = allowList
 }
