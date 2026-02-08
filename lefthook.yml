@@ -1,0 +1,27 @@
+# Lefthook configuration for jig
+# Install: brew install lefthook && lefthook install
+
+pre-commit:
+  parallel: true
+  commands:
+    fmt:
+      glob: "*.go"
+      run: go fmt {staged_files}
+      stage_fixed: true
+
+    vet:
+      glob: "*.go"
+      run: go vet ./...
+
+    lint:
+      glob: "*.go"
+      run: golangci-lint run --new-from-rev=HEAD~1
+
+    mod-tidy:
+      glob: "{go.mod,go.sum}"
+      run: go mod tidy && git diff --exit-code go.mod go.sum
+
+pre-push:
+  commands:
+    test:
+      run: go test ./...
