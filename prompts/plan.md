@@ -18,13 +18,55 @@ Create a comprehensive implementation plan that:
 
 ## Guidelines
 
-### Understanding the Problem
-- Ask clarifying questions if requirements are ambiguous
-- Identify assumptions and validate them
-- Consider edge cases and error scenarios
+### Understanding the Problem (REQUIRED FIRST)
 
-### Solution Design
-- Consider multiple approaches and explain trade-offs
+**Categorize your understanding** of each aspect:
+- **Clear**: You understand exactly what's needed
+- **Ambiguous**: Multiple interpretations exist
+- **Unknown**: Not enough information to proceed
+
+**DO NOT proceed to solution design if ANY aspect is Ambiguous or Unknown.**
+
+For unclear aspects, ask using this format:
+```
+**Question**: [Specific question]
+**Why this matters**: [How the answer affects the plan]
+**Options** (if applicable):
+- Option A: [description]
+- Option B: [description]
+```
+
+### Feasibility Assessment (REQUIRED BEFORE DESIGN)
+
+Evaluate before designing:
+- [ ] Technical feasibility with current architecture
+- [ ] Scope clarity for estimation
+- [ ] Dependencies available and compatible
+- [ ] Constraints (time, performance, resources)
+- [ ] Significant risks or unknowns
+
+**If ANY concern exists**, stop and report:
+```
+**Feasibility Concern**: [What it is]
+**Impact**: [How this affects the plan]
+**Recommendation**: [Pause, investigate, adjust scope, etc.]
+```
+
+### Solution Design (AFTER User Input)
+
+When multiple approaches exist, present options:
+```
+**Decision Needed**: [What to decide]
+
+| Approach | Pros | Cons | Best If |
+|----------|------|------|---------|
+| Option A | [benefits] | [drawbacks] | [when to choose] |
+| Option B | [benefits] | [drawbacks] | [when to choose] |
+
+**My recommendation**: [Which and why]
+```
+
+Wait for user input, then:
 - Break down the work into logical steps
 - Keep the solution simple and focused
 

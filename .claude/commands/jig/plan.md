@@ -52,24 +52,174 @@ If no context is found, ask the user what they want to plan.
 Before creating a plan:
 
 1. **Analyze the request**: What is the user trying to accomplish?
-2. **Ask clarifying questions** if requirements are unclear:
-   - What problem does this solve?
-   - Who are the users/consumers?
-   - What are the constraints?
-   - Are there existing patterns to follow?
+
+2. **Categorize your understanding** of each aspect:
+   - **Clear**: You understand exactly what's needed and how to implement it
+   - **Ambiguous**: Multiple interpretations exist, or details are underspecified
+   - **Unknown**: You don't have enough information to proceed
+
 3. **Explore the codebase** to understand:
    - Existing architecture and patterns
    - Related code that might be affected
    - Testing patterns and conventions
 
+#### 1.1 Ask Clarifying Questions (REQUIRED)
+
+**DO NOT proceed to solution design if ANY aspect is Ambiguous or Unknown.**
+
+For each ambiguous or unknown aspect, ask the user using this format:
+
+```
+**Question**: [Specific question about the unclear aspect]
+**Why this matters**: [Brief explanation of how the answer affects the plan]
+**Options** (if applicable):
+- Option A: [description]
+- Option B: [description]
+```
+
+Wait for user responses before continuing to Step 2.
+
 ### Step 2: Design the Solution
 
-Think through:
+#### 2.1 Assess Feasibility First (REQUIRED)
 
-1. **High-level approach**: What's the overall strategy?
+Before designing, evaluate feasibility using this checklist:
+
+- [ ] **Technical feasibility**: Can this be built with current technologies and architecture?
+- [ ] **Scope clarity**: Is the scope well-defined enough to estimate effort?
+- [ ] **Dependencies**: Are all required dependencies available and compatible?
+- [ ] **Constraints**: Are there time, performance, or resource constraints that affect approach?
+- [ ] **Risks**: Are there significant unknowns or risks that could block implementation?
+
+**If ANY concern is found**: Stop and report to the user before proceeding.
+
+```
+**Feasibility Concern**: [What the concern is]
+**Impact**: [How this affects the plan]
+**Recommendation**: [What you suggest - pause, investigate, adjust scope, etc.]
+```
+
+#### 2.2 Present Alternatives When Tradeoffs Exist
+
+When multiple valid approaches exist, present them to the user:
+
+```
+**Decision Needed**: [What needs to be decided]
+
+| Approach | Pros | Cons | Best If |
+|----------|------|------|---------|
+| Option A | [benefits] | [drawbacks] | [when to choose] |
+| Option B | [benefits] | [drawbacks] | [when to choose] |
+
+**My recommendation**: [Which option and why]
+```
+
+Wait for user input before proceeding with the chosen approach.
+
+#### 2.3 Design with User Input
+
+After user decisions on approach, think through:
+
+1. **High-level approach**: What's the overall strategy based on chosen direction?
 2. **Acceptance criteria**: What conditions must be met for success?
 3. **Implementation details**: What specific changes are needed?
 4. **Risks**: What could go wrong? How to mitigate?
+
+---
+
+### Examples: Clarification and Feasibility
+
+#### Good Example: Asking Clarifying Questions
+
+**User request**: "Add caching to the API"
+
+**Good response**:
+```
+I've analyzed the request and have some questions before I can create a plan:
+
+**Question**: Which endpoints need caching?
+**Why this matters**: Caching strategy differs significantly between read-heavy endpoints (where aggressive caching helps) vs write-heavy endpoints (where cache invalidation becomes complex).
+**Options**:
+- All GET endpoints
+- Only specific high-traffic endpoints (please specify)
+- Only endpoints with expensive database queries
+
+**Question**: What cache backend should we use?
+**Why this matters**: This affects infrastructure requirements and implementation approach.
+**Options**:
+- Redis (recommended for distributed systems)
+- In-memory (simpler but doesn't share across instances)
+- Existing infrastructure (please specify what's available)
+
+**Question**: What are the cache invalidation requirements?
+**Why this matters**: Stale data tolerance affects complexity significantly.
+**Options**:
+- Time-based expiration only (simplest)
+- Invalidate on writes (moderate complexity)
+- Real-time consistency required (most complex)
+```
+
+#### Bad Example: Making Assumptions
+
+**User request**: "Add caching to the API"
+
+**Bad response**:
+```
+I'll create a plan to add Redis caching to all GET endpoints with a 5-minute TTL
+and automatic invalidation on writes.
+
+## Problem Statement
+Add caching to improve API performance...
+```
+
+*This is bad because*: The agent assumed Redis, assumed all GET endpoints, assumed 5-minute TTL, and assumed write-based invalidation without asking. These assumptions could lead to over-engineering or wrong solutions.
+
+---
+
+#### Good Example: Reporting Feasibility Concerns
+
+**User request**: "Add real-time collaboration to the document editor"
+
+**Good response**:
+```
+**Feasibility Concern**: The current architecture uses REST APIs with polling.
+Real-time collaboration typically requires WebSocket infrastructure.
+
+**Impact**: This would require:
+- Adding WebSocket server support
+- Implementing operational transformation (OT) or CRDT algorithms
+- Significant changes to the document data model
+- New infrastructure for connection management
+
+**Recommendation**: Before proceeding with planning, we should:
+1. Confirm this scope is acceptable (this is a significant undertaking)
+2. Decide on the synchronization approach (OT vs CRDT)
+3. Evaluate if existing real-time libraries could be used
+
+Would you like to proceed with a plan of this scope, or should we explore a simpler alternative like periodic auto-save with conflict detection?
+```
+
+#### Bad Example: Ignoring Feasibility Concerns
+
+**User request**: "Add real-time collaboration to the document editor"
+
+**Bad response**:
+```
+## Problem Statement
+Add real-time collaboration so multiple users can edit simultaneously.
+
+## Proposed Solution
+Implement WebSocket connections and operational transformation...
+
+## Implementation Details
+1. Add Socket.io server
+2. Implement OT algorithm
+3. Update document model...
+```
+
+*This is bad because*: The agent jumped straight to planning without flagging that this is a major architectural change requiring significant scope discussion.
+
+---
 
 ### Step 3: Write the Plan
 
