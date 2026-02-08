@@ -241,8 +241,15 @@ func (c *Cache) DeleteIssueMetadata(issueID string) error {
 	return nil
 }
 
-// SyncPRForIssue fetches PR info from GitHub and updates IssueMetadata
+// SyncPRForIssue fetches PR info from GitHub and updates IssueMetadata.
+// It uses git.DefaultClient which can be replaced with a mock for testing.
 func (c *Cache) SyncPRForIssue(issueID string) (int, error) {
+	return c.SyncPRForIssueWithClient(issueID, git.DefaultClient)
+}
+
+// SyncPRForIssueWithClient fetches PR info using the provided git client.
+// This allows for dependency injection in tests.
+func (c *Cache) SyncPRForIssueWithClient(issueID string, client git.Client) (int, error) {
 	meta, err := c.GetIssueMetadata(issueID)
 	if err != nil || meta == nil {
 		return 0, fmt.Errorf("no metadata found for issue %s", issueID)
@@ -256,7 +263,7 @@ func (c *Cache) SyncPRForIssue(issueID string) (int, error) {
 		return 0, fmt.Errorf("no branch name recorded for issue %s", issueID)
 	}
 
-	pr, err := git.GetPRForBranch(meta.BranchName)
+	pr, err := client.GetPRForBranch(meta.BranchName)
 	if err != nil {
 		return 0, err
 	}
@@ -286,8 +293,12 @@ func (c *Cache) Clear() error {
 // DefaultCache is a convenience instance
 var DefaultCache *Cache
 
-// Init initializes the default cache
+// Init initializes the default cache if not already initialized.
+// This is idempotent - if DefaultCache is already set (e.g., by tests), it's a no-op.
 func Init() error {
+	if DefaultCache != nil {
+		return nil
+	}
 	var err error
 	DefaultCache, err = NewCache()
 	return err

@@ -41,8 +41,13 @@ func init() {
 }
 
 func runPR(cmd *cobra.Command, args []string) error {
+	return runPRWithClient(args, git.DefaultClient)
+}
+
+// runPRWithClient is the main implementation that accepts a git.Client for testing.
+func runPRWithClient(args []string, client git.Client) error {
 	// Check if gh is available
-	if !git.GHAvailable() {
+	if !client.Available() {
 		return fmt.Errorf("GitHub CLI (gh) is not available or not authenticated")
 	}
 
@@ -57,7 +62,7 @@ func runPR(cmd *cobra.Command, args []string) error {
 		issueID = args[0]
 	} else {
 		// Try to detect from current branch
-		branch, err := git.GetCurrentBranch()
+		branch, err := client.GetCurrentBranch()
 		if err == nil && branch != "" {
 			// Try to extract issue ID from branch name (e.g., NUM-123-feature-name)
 			parts := strings.SplitN(branch, "-", 3)
@@ -68,13 +73,13 @@ func runPR(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get current branch for the PR
-	currentBranch, err := git.GetCurrentBranch()
+	currentBranch, err := client.GetCurrentBranch()
 	if err != nil {
 		return fmt.Errorf("failed to get current branch: %w", err)
 	}
 
 	// Check if a PR already exists for this branch
-	existingPR, err := git.GetPRForBranch(currentBranch)
+	existingPR, err := client.GetPRForBranch(currentBranch)
 	if err == nil && existingPR != nil {
 		printInfo(fmt.Sprintf("PR #%d already exists for branch %s", existingPR.Number, currentBranch))
 		printInfo(existingPR.URL)
@@ -128,7 +133,7 @@ func runPR(cmd *cobra.Command, args []string) error {
 	printInfo(fmt.Sprintf("Creating PR from %s to %s...", currentBranch, baseBranch))
 
 	// Create the PR
-	pr, err := git.CreatePR(title, body, baseBranch, prDraft)
+	pr, err := client.CreatePR(title, body, baseBranch, prDraft)
 	if err != nil {
 		return fmt.Errorf("failed to create PR: %w", err)
 	}

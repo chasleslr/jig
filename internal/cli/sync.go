@@ -34,8 +34,13 @@ func init() {
 }
 
 func runSync(cmd *cobra.Command, args []string) error {
+	return runSyncWithClient(args, git.DefaultClient)
+}
+
+// runSyncWithClient is the main implementation that accepts a git.Client for testing.
+func runSyncWithClient(args []string, client git.Client) error {
 	// Check if gh is available
-	if !git.GHAvailable() {
+	if !client.Available() {
 		return fmt.Errorf("GitHub CLI (gh) is not available or not authenticated")
 	}
 
@@ -45,7 +50,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 	}
 
 	if syncAll {
-		return syncAllIssues()
+		return syncAllIssuesWithClient(client)
 	}
 
 	// Determine issue ID
@@ -54,7 +59,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 		issueID = args[0]
 	} else {
 		// Try to detect from current branch
-		branch, err := git.GetCurrentBranch()
+		branch, err := client.GetCurrentBranch()
 		if err == nil && branch != "" {
 			// Try to extract issue ID from branch name (e.g., NUM-123-feature-name)
 			parts := strings.SplitN(branch, "-", 3)
@@ -68,13 +73,14 @@ func runSync(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("could not detect issue - provide ISSUE argument or run from a worktree")
 	}
 
-	return syncIssue(issueID)
+	return syncIssueWithClient(issueID, client)
 }
 
-func syncIssue(issueID string) error {
+// syncIssueWithClient syncs PR info for a single issue using the provided client.
+func syncIssueWithClient(issueID string, client git.Client) error {
 	printInfo(fmt.Sprintf("Syncing PR info for %s...", issueID))
 
-	prNumber, err := state.DefaultCache.SyncPRForIssue(issueID)
+	prNumber, err := state.DefaultCache.SyncPRForIssueWithClient(issueID, client)
 	if err != nil {
 		return fmt.Errorf("failed to sync: %w", err)
 	}
@@ -88,7 +94,8 @@ func syncIssue(issueID string) error {
 	return nil
 }
 
-func syncAllIssues() error {
+// syncAllIssuesWithClient syncs PR info for all tracked issues using the provided client.
+func syncAllIssuesWithClient(client git.Client) error {
 	printInfo("Syncing all tracked issues...")
 
 	metadata, err := state.DefaultCache.ListIssueMetadata()
@@ -114,7 +121,7 @@ func syncAllIssues() error {
 			continue
 		}
 
-		prNumber, err := state.DefaultCache.SyncPRForIssue(meta.IssueID)
+		prNumber, err := state.DefaultCache.SyncPRForIssueWithClient(meta.IssueID, client)
 		if err != nil {
 			printWarning(fmt.Sprintf("%s: sync failed - %v", meta.IssueID, err))
 			failed++

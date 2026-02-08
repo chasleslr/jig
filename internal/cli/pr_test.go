@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/charleslr/jig/internal/git"
+	gitmock "github.com/charleslr/jig/internal/git/mock"
 	"github.com/charleslr/jig/internal/state"
 )
 
@@ -177,5 +180,132 @@ func TestUpdatePRMetadataUpdatesExisting(t *testing.T) {
 	// Check preserved values
 	if meta.WorktreePath != "/path/to/worktree" {
 		t.Errorf("WorktreePath = %q, want %q (should be preserved)", meta.WorktreePath, "/path/to/worktree")
+	}
+}
+
+func TestRunPRWithClientNotAvailable(t *testing.T) {
+	cleanup := setupTestCache(t)
+	defer cleanup()
+
+	mockClient := gitmock.NewClient()
+	mockClient.IsAvailable = false
+
+	err := runPRWithClient([]string{}, mockClient)
+	if err == nil {
+		t.Error("runPRWithClient() should error when gh is not available")
+	}
+}
+
+func TestRunPRWithClientExistingPR(t *testing.T) {
+	cleanup := setupTestCache(t)
+	defer cleanup()
+
+	mockClient := gitmock.NewClient()
+	mockClient.CurrentBranch = "NUM-123-feature"
+	mockClient.AddPR(&git.PR{
+		Number:      42,
+		Title:       "Existing PR",
+		URL:         "https://github.com/test/repo/pull/42",
+		HeadRefName: "NUM-123-feature",
+	})
+
+	err := runPRWithClient([]string{}, mockClient)
+	if err != nil {
+		t.Errorf("runPRWithClient() error = %v", err)
+	}
+
+	// Verify metadata was updated
+	meta, _ := state.DefaultCache.GetIssueMetadata("NUM-123")
+	if meta == nil {
+		t.Fatal("expected metadata to be created for existing PR")
+	}
+	if meta.PRNumber != 42 {
+		t.Errorf("PRNumber = %d, want 42", meta.PRNumber)
+	}
+}
+
+func TestRunPRWithClientCreatesPR(t *testing.T) {
+	cleanup := setupTestCache(t)
+	defer cleanup()
+
+	// Reset global flags to defaults
+	prTitle = ""
+	prBody = ""
+	prBase = ""
+	prDraft = true
+
+	mockClient := gitmock.NewClient()
+	mockClient.CurrentBranch = "NUM-456-new-feature"
+
+	err := runPRWithClient([]string{}, mockClient)
+	if err != nil {
+		t.Errorf("runPRWithClient() error = %v", err)
+	}
+
+	// Verify CreatePR was called
+	if len(mockClient.CreatePRCalls) != 1 {
+		t.Fatalf("expected 1 CreatePR call, got %d", len(mockClient.CreatePRCalls))
+	}
+
+	call := mockClient.CreatePRCalls[0]
+	if call.Draft != true {
+		t.Errorf("CreatePR Draft = %v, want true", call.Draft)
+	}
+	if call.BaseBranch != "main" {
+		t.Errorf("CreatePR BaseBranch = %q, want %q", call.BaseBranch, "main")
+	}
+
+	// Verify metadata was created
+	meta, _ := state.DefaultCache.GetIssueMetadata("NUM-456")
+	if meta == nil {
+		t.Fatal("expected metadata to be created")
+	}
+	if meta.PRNumber != 1 { // Mock assigns PR numbers starting from 1
+		t.Errorf("PRNumber = %d, want 1", meta.PRNumber)
+	}
+}
+
+func TestRunPRWithClientExplicitIssueID(t *testing.T) {
+	cleanup := setupTestCache(t)
+	defer cleanup()
+
+	// Reset global flags to defaults
+	prTitle = ""
+	prBody = ""
+	prBase = ""
+	prDraft = true
+
+	mockClient := gitmock.NewClient()
+	mockClient.CurrentBranch = "some-other-branch"
+
+	err := runPRWithClient([]string{"EXPLICIT-789"}, mockClient)
+	if err != nil {
+		t.Errorf("runPRWithClient() error = %v", err)
+	}
+
+	// Verify metadata was created with explicit issue ID
+	meta, _ := state.DefaultCache.GetIssueMetadata("EXPLICIT-789")
+	if meta == nil {
+		t.Fatal("expected metadata to be created with explicit issue ID")
+	}
+}
+
+func TestRunPRWithClientCreatePRError(t *testing.T) {
+	cleanup := setupTestCache(t)
+	defer cleanup()
+
+	// Reset global flags
+	prTitle = ""
+	prBody = ""
+	prBase = ""
+	prDraft = true
+
+	mockClient := gitmock.NewClient()
+	mockClient.CurrentBranch = "NUM-999-feature"
+	mockClient.CreatePRError = fmt.Errorf("network error")
+
+	err := runPRWithClient([]string{}, mockClient)
+	if err == nil {
+		t.Error("runPRWithClient() should error when CreatePR fails")
 	}
 }
