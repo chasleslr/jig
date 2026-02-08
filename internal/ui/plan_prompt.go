@@ -62,11 +62,12 @@ type PlanPromptModel struct {
 	quitting     bool
 
 	// Sub-models
-	textArea        TextAreaModel
-	contextViewport viewport.Model
-	contextReady    bool
-	width           int
-	height          int
+	textArea         TextAreaModel
+	contextViewport  viewport.Model
+	contextReady     bool
+	contextContent   string // Cached rendered content
+	width            int
+	height           int
 }
 
 type menuOption struct {
@@ -112,9 +113,9 @@ func (m PlanPromptModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.contextViewport.Height = msg.Height - headerHeight - footerHeight
 		}
 
-		// Update viewport content if we're in context view
-		if m.state == stateViewContext {
-			m.contextViewport.SetContent(m.renderContextContent())
+		// Update viewport content if we're in context view and have cached content
+		if m.state == stateViewContext && m.contextContent != "" {
+			m.contextViewport.SetContent(m.contextContent)
 		}
 	}
 
@@ -161,8 +162,12 @@ func (m PlanPromptModel) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			case PlanPromptActionViewContext:
 				m.state = stateViewContext
+				// Render content once and cache it
+				if m.contextContent == "" {
+					m.contextContent = m.renderContextContent()
+				}
 				if m.contextReady {
-					m.contextViewport.SetContent(m.renderContextContent())
+					m.contextViewport.SetContent(m.contextContent)
 					m.contextViewport.GotoTop()
 				}
 				return m, nil
@@ -330,11 +335,14 @@ func (m PlanPromptModel) viewContext() string {
 	b.WriteString(strings.Repeat("─", 60))
 	b.WriteString("\n\n")
 
-	if m.contextReady {
+	if m.contextReady && m.contextContent != "" {
 		// Viewport with scrollable content
 		b.WriteString(m.contextViewport.View())
-	} else {
+	} else if m.contextContent != "" {
 		// Fallback for when viewport is not yet initialized
+		b.WriteString(m.contextContent)
+	} else {
+		// Fallback - render now (shouldn't happen in normal flow)
 		b.WriteString(m.renderContextContent())
 	}
 

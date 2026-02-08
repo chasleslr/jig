@@ -290,50 +290,53 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		issueID = args[0]
 
-		t, err := getTracker(cfg)
-		if err != nil {
-			printWarning(fmt.Sprintf("Could not connect to tracker: %v", err))
-		} else {
-			// Fetch issue with spinner for better UX during API latency
-			var fetchErr error
-			if ui.IsInteractive() {
-				fetchErr = ui.RunWithSpinner(fmt.Sprintf("Fetching issue %s", issueID), func() error {
-					var err error
-					issue, err = t.GetIssue(ctx, issueID)
+		// Fetch issue with spinner for better UX during API latency
+		var fetchErr error
+		if ui.IsInteractive() {
+			fetchErr = ui.RunWithSpinner(fmt.Sprintf("Fetching issue %s", issueID), func() error {
+				t, err := getTracker(cfg)
+				if err != nil {
 					return err
-				})
+				}
+				issue, err = t.GetIssue(ctx, issueID)
+				return err
+			})
+		} else {
+			t, err := getTracker(cfg)
+			if err != nil {
+				fetchErr = err
 			} else {
 				issue, fetchErr = t.GetIssue(ctx, issueID)
 			}
+		}
 
-			if fetchErr != nil {
-				printWarning(fmt.Sprintf("Could not fetch issue: %v", fetchErr))
-			} else {
-				// Show interactive menu if we have an issue and are in interactive mode
-				if ui.IsInteractive() {
-					result, err := ui.RunPlanPrompt(issue)
-					if err != nil {
-						return fmt.Errorf("failed to run plan prompt: %w", err)
-					}
-
-					if result.Action == ui.PlanPromptActionCancel {
-						return nil // User cancelled
-					}
-
-					// Collect any additional instructions
-					additionalInstructions = result.Instructions
-
-					// Show confirmation of what was captured
-					printSuccess(fmt.Sprintf("Issue loaded: %s", issue.Identifier))
-					if additionalInstructions != "" {
-						printInfo("Custom instructions added")
-					}
+		if fetchErr != nil {
+			printWarning(fmt.Sprintf("Could not fetch issue: %v", fetchErr))
+		} else {
+			// Show interactive menu if we have an issue and are in interactive mode
+			if ui.IsInteractive() {
+				result, err := ui.RunPlanPrompt(issue)
+				if err != nil {
+					return fmt.Errorf("failed to run plan prompt: %w", err)
 				}
 
-				issueContext = formatIssueContext(issue)
-				if planNewTitle == "" {
-					planNewTitle = issue.Title
+				if result.Action == ui.PlanPromptActionCancel {
+					return nil // User cancelled
 				}
+
+				// Collect any additional instructions
+				additionalInstructions = result.Instructions
+
+				// Show confirmation of what was captured
+				printSuccess(fmt.Sprintf("Issue loaded: %s", issue.Identifier))
+				if additionalInstructions != "" {
+					printInfo("Custom instructions added")
+				}
+			}
+
+			issueContext = formatIssueContext(issue)
+			if planNewTitle == "" {
+				planNewTitle = issue.Title
 			}
 		}
 	}
