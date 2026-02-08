@@ -309,3 +309,207 @@ func TestRunPRWithClientCreatePRError(t *testing.T) {
 		t.Error("runPRWithClient() should error when CreatePR fails")
 	}
 }
+
+func TestRunPRWithClientGetCurrentBranchError(t *testing.T) {
+	cleanup := setupTestCache(t)
+	defer cleanup()
+
+	mockClient := gitmock.NewClient()
+	mockClient.GetCurrentBranchError = fmt.Errorf("git error")
+
+	err := runPRWithClient([]string{}, mockClient)
+	if err == nil {
+		t.Error("runPRWithClient() should error when GetCurrentBranch fails")
+	}
+}
+
+func TestRunPRWithClientExistingPRNoIssueID(t *testing.T) {
+	cleanup := setupTestCache(t)
+	defer cleanup()
+
+	// Branch name that doesn't match issue pattern
+	mockClient := gitmock.NewClient()
+	mockClient.CurrentBranch = "feature-branch"
+	mockClient.AddPR(&git.PR{
+		Number:      55,
+		Title:       "Existing PR",
+		URL:         "https://github.com/test/repo/pull/55",
+		HeadRefName: "feature-branch",
+	})
+
+	// Should not error even without issue ID
+	err := runPRWithClient([]string{}, mockClient)
+	if err != nil {
+		t.Errorf("runPRWithClient() error = %v", err)
+	}
+}
+
+func TestRunPRWithClientCustomBase(t *testing.T) {
+	cleanup := setupTestCache(t)
+	defer cleanup()
+
+	// Set custom base branch
+	prTitle = ""
+	prBody = ""
+	prBase = "develop"
+	prDraft = false
+	defer func() { prBase = "" }()
+
+	mockClient := gitmock.NewClient()
+	mockClient.CurrentBranch = "NUM-100-feature"
+
+	err := runPRWithClient([]string{}, mockClient)
+	if err != nil {
+		t.Errorf("runPRWithClient() error = %v", err)
+	}
+
+	// Verify CreatePR was called with custom base
+	if len(mockClient.CreatePRCalls) != 1 {
+		t.Fatalf("expected 1 CreatePR call, got %d", len(mockClient.CreatePRCalls))
+	}
+	if mockClient.CreatePRCalls[0].BaseBranch != "develop" {
+		t.Errorf("BaseBranch = %q, want %q", mockClient.CreatePRCalls[0].BaseBranch, "develop")
+	}
+	if mockClient.CreatePRCalls[0].Draft != false {
+		t.Error("Draft should be false")
+	}
+}
+
+func TestRunPRWithClientNoIssueIDBody(t *testing.T) {
+	cleanup := setupTestCache(t)
+	defer cleanup()
+
+	// Reset flags
+	prTitle = ""
+	prBody = ""
+	prBase = ""
+	prDraft = true
+
+	// Branch name with only one part (no dashes) - won't be parsed as issue ID
+	mockClient := gitmock.NewClient()
+	mockClient.CurrentBranch = "featurebranch"
+
+	err := runPRWithClient([]string{}, mockClient)
+	if err != nil {
+		t.Errorf("runPRWithClient() error = %v", err)
+	}
+
+	// Verify CreatePR was called with default body (no issue ID)
+	if len(mockClient.CreatePRCalls) != 1 {
+		t.Fatalf("expected 1 CreatePR call, got %d", len(mockClient.CreatePRCalls))
+	}
+	if mockClient.CreatePRCalls[0].Body != "PR created via jig pr" {
+		t.Errorf("Body = %q, want %q", mockClient.CreatePRCalls[0].Body, "PR created via jig pr")
+	}
+}
+
+func TestRunPRWithClientCustomTitleAndBody(t *testing.T) {
+	cleanup := setupTestCache(t)
+	defer cleanup()
+
+	// Set custom title and body
+	prTitle = "Custom Title"
+	prBody = "Custom Body"
+	prBase = ""
+	prDraft = true
+	defer func() {
+		prTitle = ""
+		prBody = ""
+	}()
+
+	mockClient := gitmock.NewClient()
+	mockClient.CurrentBranch = "NUM-200-feature"
+
+	err := runPRWithClient([]string{}, mockClient)
+	if err != nil {
+		t.Errorf("runPRWithClient() error = %v", err)
+	}
+
+	// Verify CreatePR was called with custom title/body
+	if len(mockClient.CreatePRCalls) != 1 {
+		t.Fatalf("expected 1 CreatePR call, got %d", len(mockClient.CreatePRCalls))
+	}
+	if mockClient.CreatePRCalls[0].Title != "Custom Title" {
+		t.Errorf("Title = %q, want %q", mockClient.CreatePRCalls[0].Title, "Custom Title")
+	}
+	if mockClient.CreatePRCalls[0].Body != "Custom Body" {
+		t.Errorf("Body = %q, want %q", mockClient.CreatePRCalls[0].Body, "Custom Body")
+	}
+}
+
+func TestUpdatePRMetadataError(t *testing.T) {
+	// Create a temp dir for test cache
+	tmpDir, err := os.MkdirTemp("", "jig-cli-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create directories
+	issuesDir := filepath.Join(tmpDir, "issues")
+	if err := os.MkdirAll(issuesDir, 0755); err != nil {
+		t.Fatalf("failed to create issues dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, "plans"), 0755); err != nil {
+		t.Fatalf("failed to create plans dir: %v", err)
+	}
+
+	// Write invalid JSON to trigger GetIssueMetadata error
+	invalidJSON := filepath.Join(issuesDir, "ERROR-ISSUE.json")
+	if err := os.WriteFile(invalidJSON, []byte("not valid json"), 0644); err != nil {
+		t.Fatalf("failed to write invalid JSON: %v", err)
+	}
+
+	originalCache := state.DefaultCache
+	state.DefaultCache = state.NewCacheWithDir(tmpDir)
+	defer func() { state.DefaultCache = originalCache }()
+
+	// updatePRMetadata should return error due to invalid JSON
+	err = updatePRMetadata("ERROR-ISSUE", "branch", 42, "url")
+	if err == nil {
+		t.Error("updatePRMetadata() should error when GetIssueMetadata fails")
+	}
+}
+
+func TestRunPRWithClientExistingPRMetadataError(t *testing.T) {
+	// Create a temp dir for test cache
+	tmpDir, err := os.MkdirTemp("", "jig-cli-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create directories
+	issuesDir := filepath.Join(tmpDir, "issues")
+	if err := os.MkdirAll(issuesDir, 0755); err != nil {
+		t.Fatalf("failed to create issues dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, "plans"), 0755); err != nil {
+		t.Fatalf("failed to create plans dir: %v", err)
+	}
+
+	// Write invalid JSON for the issue to trigger updatePRMetadata error
+	invalidJSON := filepath.Join(issuesDir, "ERR-123.json")
+	if err := os.WriteFile(invalidJSON, []byte("not valid json"), 0644); err != nil {
+		t.Fatalf("failed to write invalid JSON: %v", err)
+	}
+
+	originalCache := state.DefaultCache
+	state.DefaultCache = state.NewCacheWithDir(tmpDir)
+	defer func() { state.DefaultCache = originalCache }()
+
+	mockClient := gitmock.NewClient()
+	mockClient.CurrentBranch = "ERR-123-feature"
+	mockClient.AddPR(&git.PR{
+		Number:      99,
+		Title:       "Existing PR",
+		URL:         "https://github.com/test/repo/pull/99",
+		HeadRefName: "ERR-123-feature",
+	})
+
+	// Should not error (just warn), even when metadata update fails
+	err = runPRWithClient([]string{}, mockClient)
+	if err != nil {
+		t.Errorf("runPRWithClient() should not error when metadata update fails, got: %v", err)
+	}
+}

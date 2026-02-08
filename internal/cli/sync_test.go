@@ -385,3 +385,98 @@ func TestSyncIssueWithClientError(t *testing.T) {
 		t.Error("syncIssueWithClient() should error when GetPRForBranch fails")
 	}
 }
+
+func TestRunSyncWithClientSyncAllFlag(t *testing.T) {
+	cleanup := setupTestCache(t)
+	defer cleanup()
+
+	// Save original syncAll and restore after test
+	originalSyncAll := syncAll
+	syncAll = true
+	defer func() { syncAll = originalSyncAll }()
+
+	mockClient := gitmock.NewClient()
+
+	// Create some metadata
+	meta := &state.IssueMetadata{
+		IssueID:    "SYNC-ALL-1",
+		BranchName: "branch-1",
+		PRNumber:   10,
+	}
+	if err := state.DefaultCache.SaveIssueMetadata(meta); err != nil {
+		t.Fatalf("SaveIssueMetadata() error = %v", err)
+	}
+
+	err := runSyncWithClient([]string{}, mockClient)
+	if err != nil {
+		t.Errorf("runSyncWithClient() with --all error = %v", err)
+	}
+}
+
+func TestSyncAllIssuesWithClientSyncError(t *testing.T) {
+	cleanup := setupTestCache(t)
+	defer cleanup()
+
+	mockClient := gitmock.NewClient()
+	mockClient.GetPRForBranchError = fmt.Errorf("API error")
+
+	// Create metadata with branch but no PR - sync will fail
+	meta := &state.IssueMetadata{
+		IssueID:    "FAIL-SYNC",
+		BranchName: "fail-branch",
+	}
+	if err := state.DefaultCache.SaveIssueMetadata(meta); err != nil {
+		t.Fatalf("SaveIssueMetadata() error = %v", err)
+	}
+
+	// Should not error, just report the failure in summary
+	err := syncAllIssuesWithClient(mockClient)
+	if err != nil {
+		t.Errorf("syncAllIssuesWithClient() should not error on sync failure, got: %v", err)
+	}
+}
+
+func TestSyncAllIssuesWithClientNotFoundPath(t *testing.T) {
+	cleanup := setupTestCache(t)
+	defer cleanup()
+
+	mockClient := gitmock.NewClient()
+	// No PRs in mock - so sync will return "not found"
+
+	// Create metadata with branch but no corresponding PR
+	meta := &state.IssueMetadata{
+		IssueID:    "NOT-FOUND-1",
+		BranchName: "orphan-branch-1",
+	}
+	if err := state.DefaultCache.SaveIssueMetadata(meta); err != nil {
+		t.Fatalf("SaveIssueMetadata() error = %v", err)
+	}
+
+	meta2 := &state.IssueMetadata{
+		IssueID:    "NOT-FOUND-2",
+		BranchName: "orphan-branch-2",
+	}
+	if err := state.DefaultCache.SaveIssueMetadata(meta2); err != nil {
+		t.Fatalf("SaveIssueMetadata() error = %v", err)
+	}
+
+	// Should not error
+	err := syncAllIssuesWithClient(mockClient)
+	if err != nil {
+		t.Errorf("syncAllIssuesWithClient() error = %v", err)
+	}
+}
+
+func TestRunSyncWithClientGetCurrentBranchError(t *testing.T) {
+	cleanup := setupTestCache(t)
+	defer cleanup()
+
+	mockClient := gitmock.NewClient()
+	mockClient.GetCurrentBranchError = fmt.Errorf("git error")
+
+	// With no args and GetCurrentBranch error, should fail to detect issue
+	err := runSyncWithClient([]string{}, mockClient)
+	if err == nil {
+		t.Error("runSyncWithClient() should error when cannot detect issue")
+	}
+}
