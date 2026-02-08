@@ -252,3 +252,117 @@ func TestGetPlanMarkdownNotFound(t *testing.T) {
 		t.Errorf("GetPlanMarkdown() should return empty string for non-existent plan, got %q", content)
 	}
 }
+
+// TestImplementFlowPreservesAllSections tests the full implement flow:
+// SavePlan -> GetPlan -> Serialize
+// This is the exact path used by `jig implement` and must preserve all sections.
+func TestImplementFlowPreservesAllSections(t *testing.T) {
+	// Create a temporary directory for the test cache
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create cache directories
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Create a plan with extra sections (like Implementation Details)
+	rawContent := `---
+id: impl-flow-test
+title: Implementation Flow Test
+status: draft
+author: testuser
+---
+
+# Implementation Flow Test
+
+## Problem Statement
+
+Testing the implementation flow.
+
+## Proposed Solution
+
+Use the existing flow.
+
+## Acceptance Criteria
+
+- [ ] All sections preserved
+- [ ] Status can be updated
+
+## Implementation Details
+
+### File: internal/foo/bar.go
+
+` + "```go" + `
+func Example() {
+    // This code block should be preserved
+}
+` + "```" + `
+
+## Verification
+
+1. Build the project
+2. Run tests
+`
+
+	// Parse the raw content to get a Plan struct (simulates what happens when plan is saved)
+	p, err := plan.Parse([]byte(rawContent))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	// Save the plan to cache
+	if err := cache.SavePlan(p); err != nil {
+		t.Fatalf("SavePlan() error = %v", err)
+	}
+
+	// Get the plan from cache (what implement.go does)
+	retrieved, err := cache.GetPlan("impl-flow-test")
+	if err != nil {
+		t.Fatalf("GetPlan() error = %v", err)
+	}
+
+	// Verify RawContent is preserved through JSON serialization
+	if retrieved.RawContent == "" {
+		t.Fatal("GetPlan() returned plan with empty RawContent")
+	}
+
+	// Change status (what implement.go does before calling Prepare)
+	retrieved.Status = plan.StatusInProgress
+
+	// Serialize the plan (what runner.Prepare does to write .jig/plan.md)
+	serialized, err := plan.Serialize(retrieved)
+	if err != nil {
+		t.Fatalf("Serialize() error = %v", err)
+	}
+
+	serializedStr := string(serialized)
+
+	// Verify all sections are preserved
+	requiredSections := []string{
+		"## Problem Statement",
+		"## Proposed Solution",
+		"## Acceptance Criteria",
+		"## Implementation Details",
+		"## Verification",
+		"func Example()",
+	}
+
+	for _, section := range requiredSections {
+		if !strings.Contains(serializedStr, section) {
+			t.Errorf("serialized plan missing section: %s", section)
+		}
+	}
+
+	// Verify status was updated in frontmatter
+	if !strings.Contains(serializedStr, "status: in-progress") {
+		t.Error("serialized plan should have updated status in frontmatter")
+	}
+}

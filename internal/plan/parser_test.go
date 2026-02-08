@@ -383,3 +383,168 @@ Even nested content.
 		t.Error("RawContent should contain the custom content text")
 	}
 }
+
+func TestSerializePreservesExtraSections(t *testing.T) {
+	content := `---
+id: test-plan
+title: Test Plan
+status: draft
+author: testuser
+---
+
+# Test Plan
+
+## Problem Statement
+
+Problem description here.
+
+## Proposed Solution
+
+Solution description here.
+
+## Acceptance Criteria
+
+- [ ] Criterion 1
+- [ ] Criterion 2
+
+## Implementation Details
+
+### File: internal/foo/bar.go
+
+` + "```go" + `
+func Example() {
+    // code here
+}
+` + "```" + `
+
+## Verification
+
+1. Build: go build ./...
+2. Test: go test ./...
+`
+
+	// Parse the plan
+	plan, err := Parse([]byte(content))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	// Serialize it back
+	serialized, err := Serialize(plan)
+	if err != nil {
+		t.Fatalf("Serialize() error = %v", err)
+	}
+
+	// Verify extra sections are preserved
+	if !strings.Contains(string(serialized), "## Acceptance Criteria") {
+		t.Error("serialized content should contain 'Acceptance Criteria' section")
+	}
+	if !strings.Contains(string(serialized), "## Implementation Details") {
+		t.Error("serialized content should contain 'Implementation Details' section")
+	}
+	if !strings.Contains(string(serialized), "## Verification") {
+		t.Error("serialized content should contain 'Verification' section")
+	}
+	if !strings.Contains(string(serialized), "func Example()") {
+		t.Error("serialized content should contain code example")
+	}
+}
+
+func TestSerializeUpdatesStatusInFrontmatter(t *testing.T) {
+	content := `---
+id: test-plan
+title: Test Plan
+status: draft
+author: testuser
+---
+
+# Test Plan
+
+## Problem Statement
+
+Problem.
+
+## Proposed Solution
+
+Solution.
+
+## Extra Content
+
+This should be preserved.
+`
+
+	// Parse the plan
+	plan, err := Parse([]byte(content))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	// Change the status
+	plan.Status = StatusInProgress
+
+	// Serialize it back
+	serialized, err := Serialize(plan)
+	if err != nil {
+		t.Fatalf("Serialize() error = %v", err)
+	}
+
+	// Verify status is updated in frontmatter
+	if !strings.Contains(string(serialized), "status: in-progress") {
+		t.Error("serialized content should have updated status in frontmatter")
+	}
+
+	// Verify extra content is still preserved
+	if !strings.Contains(string(serialized), "## Extra Content") {
+		t.Error("serialized content should preserve extra sections")
+	}
+	if !strings.Contains(string(serialized), "This should be preserved") {
+		t.Error("serialized content should preserve extra content text")
+	}
+}
+
+func TestExtractBodyFromRawContent(t *testing.T) {
+	tests := []struct {
+		name        string
+		rawContent  string
+		wantBody    string
+		wantErr     bool
+	}{
+		{
+			name: "normal frontmatter",
+			rawContent: `---
+id: test
+title: Test
+---
+
+# Body content here`,
+			wantBody: "\n\n# Body content here",
+			wantErr:  false,
+		},
+		{
+			name:       "no frontmatter",
+			rawContent: "# Just markdown",
+			wantErr:    true,
+		},
+		{
+			name: "unclosed frontmatter",
+			rawContent: `---
+id: test
+title: Test
+# No closing delimiter`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := extractBodyFromRawContent(tt.rawContent)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("extractBodyFromRawContent() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && got != tt.wantBody {
+				t.Errorf("extractBodyFromRawContent() = %q, want %q", got, tt.wantBody)
+			}
+		})
+	}
+}

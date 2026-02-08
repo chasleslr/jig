@@ -220,11 +220,13 @@ func ValidateStructure(data []byte) error {
 	return nil
 }
 
-// Serialize converts a plan back to markdown with frontmatter
+// Serialize converts a plan back to markdown with frontmatter.
+// If RawContent is available, it preserves the original markdown body
+// while updating the frontmatter with current field values.
 func Serialize(plan *Plan) ([]byte, error) {
 	var buf bytes.Buffer
 
-	// Write frontmatter
+	// Write frontmatter with current field values
 	fm := Frontmatter{
 		ID:        plan.ID,
 		Title:     plan.Title,
@@ -240,26 +242,34 @@ func Serialize(plan *Plan) ([]byte, error) {
 		return nil, fmt.Errorf("failed to serialize frontmatter: %w", err)
 	}
 	buf.Write(yamlData)
-	buf.WriteString("---\n\n")
+	buf.WriteString("---\n")
 
-	// Write title
+	// If we have raw content, extract and preserve the original body
+	if plan.RawContent != "" {
+		body, err := extractBodyFromRawContent(plan.RawContent)
+		if err != nil {
+			return nil, err
+		}
+		buf.WriteString(body)
+		return buf.Bytes(), nil
+	}
+
+	// Fallback: reconstruct from parsed fields (for programmatically created plans)
+	buf.WriteString("\n")
 	buf.WriteString(fmt.Sprintf("# %s\n\n", plan.Title))
 
-	// Write problem statement
 	if plan.ProblemStatement != "" {
 		buf.WriteString("## Problem Statement\n\n")
 		buf.WriteString(plan.ProblemStatement)
 		buf.WriteString("\n\n")
 	}
 
-	// Write proposed solution
 	if plan.ProposedSolution != "" {
 		buf.WriteString("## Proposed Solution\n\n")
 		buf.WriteString(plan.ProposedSolution)
 		buf.WriteString("\n\n")
 	}
 
-	// Write Q&A
 	if len(plan.QuestionsAnswers) > 0 {
 		buf.WriteString("## Clarifying Questions & Answers\n\n")
 		for q, a := range plan.QuestionsAnswers {
@@ -268,7 +278,6 @@ func Serialize(plan *Plan) ([]byte, error) {
 		}
 	}
 
-	// Write review notes
 	if len(plan.ReviewNotes) > 0 {
 		buf.WriteString("## Review Notes\n\n")
 		for reviewer, notes := range plan.ReviewNotes {
@@ -279,6 +288,29 @@ func Serialize(plan *Plan) ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
+}
+
+// extractBodyFromRawContent extracts everything after the frontmatter
+func extractBodyFromRawContent(rawContent string) (string, error) {
+	// Find the closing frontmatter delimiter
+	const delimiter = "---"
+
+	// Skip the opening delimiter
+	start := strings.Index(rawContent, delimiter)
+	if start == -1 {
+		return "", fmt.Errorf("no frontmatter found in raw content")
+	}
+
+	// Find the closing delimiter
+	rest := rawContent[start+len(delimiter):]
+	end := strings.Index(rest, delimiter)
+	if end == -1 {
+		return "", fmt.Errorf("unclosed frontmatter in raw content")
+	}
+
+	// Return everything after the closing delimiter
+	body := rest[end+len(delimiter):]
+	return body, nil
 }
 
 // SaveFile writes a plan to a file
