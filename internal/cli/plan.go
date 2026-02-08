@@ -661,8 +661,15 @@ var storeFactory = func() (*config.Store, error) {
 	return config.NewStore()
 }
 
+// planSyncerFactory is used to get a plan syncer (can be overridden in tests)
+var planSyncerFactory func(cfg *config.Config) (state.PlanSyncer, error)
+
 // getPlanSyncer returns a PlanSyncer for the configured tracker
 func getPlanSyncer(cfg *config.Config) (state.PlanSyncer, error) {
+	// Allow tests to override
+	if planSyncerFactory != nil {
+		return planSyncerFactory(cfg)
+	}
 	switch cfg.Default.Tracker {
 	case "linear":
 		store, err := storeFactory()

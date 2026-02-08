@@ -262,8 +262,12 @@ func (c *Cache) Clear() error {
 // DefaultCache is a convenience instance
 var DefaultCache *Cache
 
-// Init initializes the default cache
+// Init initializes the default cache.
+// If DefaultCache is already set (e.g., in tests), it is not overwritten.
 func Init() error {
+	if DefaultCache != nil {
+		return nil
+	}
 	var err error
 	DefaultCache, err = NewCache()
 	return err

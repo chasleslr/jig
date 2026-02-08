@@ -253,6 +253,59 @@ func TestGetPlanMarkdownNotFound(t *testing.T) {
 	}
 }
 
+func TestInit_PreservesExistingCache(t *testing.T) {
+	// Save original DefaultCache
+	oldCache := DefaultCache
+	defer func() { DefaultCache = oldCache }()
+
+	// Set up a custom cache
+	tmpDir, err := os.MkdirTemp("", "jig-init-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	customCache := NewCacheWithDir(tmpDir)
+	DefaultCache = customCache
+
+	// Call Init - should preserve existing cache
+	err = Init()
+	if err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	// Verify custom cache was preserved
+	if DefaultCache != customCache {
+		t.Error("Init() should preserve existing DefaultCache")
+	}
+}
+
+func TestInit_CreatesNewCache(t *testing.T) {
+	// Save original DefaultCache
+	oldCache := DefaultCache
+	defer func() { DefaultCache = oldCache }()
+
+	// Set DefaultCache to nil
+	DefaultCache = nil
+
+	// Call Init - should create new cache
+	err := Init()
+	if err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	// Verify cache was created
+	if DefaultCache == nil {
+		t.Error("Init() should create DefaultCache when nil")
+	}
+}
+
 func TestNewCacheWithDir(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "jig-cache-newwithdir-test")
 	if err != nil {
