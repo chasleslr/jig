@@ -288,6 +288,8 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 
 	var issueID string
 	var issueContext string
+	var additionalInstructions string
+	var issue *tracker.Issue
 
 	// Get issue context if provided
 	if len(args) > 0 {
@@ -298,10 +300,31 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			printWarning(fmt.Sprintf("Could not connect to tracker: %v", err))
 		} else {
-			issue, err := t.GetIssue(ctx, issueID)
+			issue, err = t.GetIssue(ctx, issueID)
 			if err != nil {
 				printWarning(fmt.Sprintf("Could not fetch issue: %v", err))
 			} else {
+				// Show interactive menu if we have an issue and are in interactive mode
+				if ui.IsInteractive() {
+					result, err := ui.RunPlanPrompt(issue)
+					if err != nil {
+						return fmt.Errorf("failed to run plan prompt: %w", err)
+					}
+
+					if result.Action == ui.PlanPromptActionCancel {
+						return nil // User cancelled
+					}
+
+					// Collect any additional instructions
+					additionalInstructions = result.Instructions
+
+					// Show confirmation of what was captured
+					printSuccess(fmt.Sprintf("Issue loaded: %s", issue.Identifier))
+					if additionalInstructions != "" {
+						printInfo("Custom instructions added")
+					}
+				}
+
 				issueContext = formatIssueContext(issue)
 				if planNewTitle == "" {
 					planNewTitle = issue.Title
@@ -327,6 +350,15 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Include additional instructions in the goal if provided
+	if additionalInstructions != "" {
+		if planGoal != "" {
+			planGoal = planGoal + "\n\n## Additional Instructions\n\n" + additionalInstructions
+		} else {
+			planGoal = additionalInstructions
+		}
+	}
+
 	// Use title if provided, otherwise use a placeholder (LLM will generate proper title)
 	if planNewTitle == "" {
 		if issueID != "" {
@@ -345,19 +377,14 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 		planID = fmt.Sprintf("PLAN-%d", time.Now().Unix())
 	}
 
-	// Create initial plan
+	// Create initial plan metadata (the actual plan content is created by Claude)
 	p := plan.NewPlan(planID, planNewTitle, author)
 	p.ProblemStatement = "TODO: Define the problem being solved"
 	p.ProposedSolution = "TODO: Describe the proposed solution"
 
-	// Initialize cache
+	// Initialize cache (plan will be saved when Claude runs `jig plan save`)
 	if err := state.Init(); err != nil {
 		return fmt.Errorf("failed to initialize cache: %w", err)
-	}
-
-	// Save initial plan to cache
-	if err := state.DefaultCache.SavePlan(p); err != nil {
-		printWarning(fmt.Sprintf("Could not cache plan: %v", err))
 	}
 
 	// Determine which runner to use (currently only Claude is supported)
