@@ -109,3 +109,67 @@ func TestPlanStatusTransitionDraftToInProgress(t *testing.T) {
 	}
 }
 
+func TestPlanStatusTransitionInProgressToComplete(t *testing.T) {
+	p := NewPlan("ENG-123", "Test", "user")
+
+	// First transition to in-progress
+	if err := p.TransitionTo(StatusInProgress); err != nil {
+		t.Fatalf("unexpected error for draft -> in-progress: %v", err)
+	}
+
+	// InProgress -> Complete is valid
+	if err := p.TransitionTo(StatusComplete); err != nil {
+		t.Errorf("unexpected error for in-progress -> complete: %v", err)
+	}
+
+	if p.Status != StatusComplete {
+		t.Errorf("expected status 'complete', got '%s'", p.Status)
+	}
+}
+
+func TestIsReadyForReview(t *testing.T) {
+	tests := []struct {
+		name   string
+		status Status
+		want   bool
+	}{
+		{"draft is ready", StatusDraft, true},
+		{"reviewing is not ready", StatusReviewing, false},
+		{"approved is not ready", StatusApproved, false},
+		{"in-progress is not ready", StatusInProgress, false},
+		{"complete is not ready", StatusComplete, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &Plan{Status: tt.status}
+			if got := p.IsReadyForReview(); got != tt.want {
+				t.Errorf("IsReadyForReview() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCanBeImplemented(t *testing.T) {
+	tests := []struct {
+		name   string
+		status Status
+		want   bool
+	}{
+		{"draft cannot be implemented", StatusDraft, false},
+		{"reviewing cannot be implemented", StatusReviewing, false},
+		{"approved can be implemented", StatusApproved, true},
+		{"in-progress can be implemented", StatusInProgress, true},
+		{"complete cannot be implemented", StatusComplete, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &Plan{Status: tt.status}
+			if got := p.CanBeImplemented(); got != tt.want {
+				t.Errorf("CanBeImplemented() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
