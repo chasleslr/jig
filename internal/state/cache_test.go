@@ -252,3 +252,104 @@ func TestGetPlanMarkdownNotFound(t *testing.T) {
 		t.Errorf("GetPlanMarkdown() should return empty string for non-existent plan, got %q", content)
 	}
 }
+
+func TestSyncPRForIssueNoMetadata(t *testing.T) {
+	// Create a temporary directory for the test cache
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create cache directories
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Try to sync an issue with no metadata
+	_, err = cache.SyncPRForIssue("nonexistent")
+	if err == nil {
+		t.Error("SyncPRForIssue() should error when no metadata exists")
+	}
+	if !strings.Contains(err.Error(), "no metadata found") {
+		t.Errorf("error should mention 'no metadata found', got: %v", err)
+	}
+}
+
+func TestSyncPRForIssueNoBranch(t *testing.T) {
+	// Create a temporary directory for the test cache
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create cache directories
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Create metadata without a branch name
+	meta := &IssueMetadata{
+		IssueID:    "test-issue",
+		BranchName: "", // No branch name
+	}
+	if err := cache.SaveIssueMetadata(meta); err != nil {
+		t.Fatalf("SaveIssueMetadata() error = %v", err)
+	}
+
+	// Try to sync
+	_, err = cache.SyncPRForIssue("test-issue")
+	if err == nil {
+		t.Error("SyncPRForIssue() should error when no branch name exists")
+	}
+	if !strings.Contains(err.Error(), "no branch name") {
+		t.Errorf("error should mention 'no branch name', got: %v", err)
+	}
+}
+
+func TestSyncPRForIssueAlreadyHasPR(t *testing.T) {
+	// Create a temporary directory for the test cache
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create cache directories
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Create metadata with existing PR number
+	meta := &IssueMetadata{
+		IssueID:    "test-issue",
+		BranchName: "feature-branch",
+		PRNumber:   42,
+		PRURL:      "https://github.com/test/repo/pull/42",
+	}
+	if err := cache.SaveIssueMetadata(meta); err != nil {
+		t.Fatalf("SaveIssueMetadata() error = %v", err)
+	}
+
+	// Sync should return existing PR number without calling GitHub
+	prNumber, err := cache.SyncPRForIssue("test-issue")
+	if err != nil {
+		t.Fatalf("SyncPRForIssue() error = %v", err)
+	}
+	if prNumber != 42 {
+		t.Errorf("SyncPRForIssue() = %d, want 42", prNumber)
+	}
+}

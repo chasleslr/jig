@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/charleslr/jig/internal/config"
+	"github.com/charleslr/jig/internal/git"
 	"github.com/charleslr/jig/internal/plan"
 )
 
@@ -238,6 +239,34 @@ func (c *Cache) DeleteIssueMetadata(issueID string) error {
 		return fmt.Errorf("failed to delete metadata: %w", err)
 	}
 	return nil
+}
+
+// SyncPRForIssue fetches PR info from GitHub and updates IssueMetadata
+func (c *Cache) SyncPRForIssue(issueID string) (int, error) {
+	meta, err := c.GetIssueMetadata(issueID)
+	if err != nil || meta == nil {
+		return 0, fmt.Errorf("no metadata found for issue %s", issueID)
+	}
+
+	if meta.PRNumber > 0 {
+		return meta.PRNumber, nil // Already have PR
+	}
+
+	if meta.BranchName == "" {
+		return 0, fmt.Errorf("no branch name recorded for issue %s", issueID)
+	}
+
+	pr, err := git.GetPRForBranch(meta.BranchName)
+	if err != nil {
+		return 0, err
+	}
+	if pr == nil {
+		return 0, nil // No PR exists yet
+	}
+
+	meta.PRNumber = pr.Number
+	meta.PRURL = pr.URL
+	return pr.Number, c.SaveIssueMetadata(meta)
 }
 
 // Clear removes all cached data
