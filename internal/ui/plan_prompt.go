@@ -1,10 +1,7 @@
 package ui
 
 import (
-	"fmt"
-	"os"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -164,19 +161,15 @@ func (m PlanPromptModel) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 
 			case PlanPromptActionViewContext:
-				fmt.Fprintf(os.Stderr, "[DEBUG] ViewContext selected at %v\n", time.Now())
 				m.state = stateViewContext
 				// Render content once and cache it
 				if m.contextContent == "" {
-					start := time.Now()
 					m.contextContent = m.renderContextContent()
-					fmt.Fprintf(os.Stderr, "[DEBUG] renderContextContent took %v\n", time.Since(start))
 				}
 				if m.contextReady {
 					m.contextViewport.SetContent(m.contextContent)
 					m.contextViewport.GotoTop()
 				}
-				fmt.Fprintf(os.Stderr, "[DEBUG] ViewContext update done at %v\n", time.Now())
 				return m, nil
 
 			case PlanPromptActionAddInstructions:
@@ -334,7 +327,6 @@ func (m PlanPromptModel) viewMenu() string {
 }
 
 func (m PlanPromptModel) viewContext() string {
-	start := time.Now()
 	var b strings.Builder
 
 	// Header
@@ -347,7 +339,6 @@ func (m PlanPromptModel) viewContext() string {
 	if m.contextContent != "" {
 		b.WriteString(m.contextContent)
 	} else {
-		fmt.Fprintf(os.Stderr, "[DEBUG] viewContext: no cached content, rendering now\n")
 		b.WriteString(m.renderContextContent())
 	}
 
@@ -355,22 +346,16 @@ func (m PlanPromptModel) viewContext() string {
 	b.WriteString("\n")
 	b.WriteString(unselectedStyle.Render("q/esc to return to menu"))
 
-	fmt.Fprintf(os.Stderr, "[DEBUG] viewContext() took %v\n", time.Since(start))
 	return b.String()
 }
 
 // renderContextContent renders the issue context for the viewport
 func (m PlanPromptModel) renderContextContent() string {
-	fmt.Fprintf(os.Stderr, "[DEBUG] renderContextContent start\n")
 	width := m.width
 	if width <= 0 {
 		width = 80
 	}
-	fmt.Fprintf(os.Stderr, "[DEBUG] calling RenderIssueContextWithWidth with width=%d\n", width)
-	start := time.Now()
-	result := RenderIssueContextWithWidth(m.issue, width)
-	fmt.Fprintf(os.Stderr, "[DEBUG] RenderIssueContextWithWidth took %v\n", time.Since(start))
-	return result
+	return RenderIssueContextWithWidth(m.issue, width)
 }
 
 func (m PlanPromptModel) viewAddInstructions() string {

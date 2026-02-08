@@ -2,9 +2,7 @@ package ui
 
 import (
 	"fmt"
-	"os"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
@@ -201,26 +199,17 @@ func RenderIssueContextWithWidth(issue *tracker.Issue, width int) string {
 // renderMarkdown renders markdown content using glamour
 // Falls back to plain text wrapping if glamour fails
 func renderMarkdown(content string, width int) string {
-	fmt.Fprintf(os.Stderr, "[DEBUG] renderMarkdown start, content len=%d\n", len(content))
-
-	start := time.Now()
+	// Use WithStandardStyle("dark") instead of WithAutoStyle() which is slow inside bubbletea
 	renderer, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
+		glamour.WithStandardStyle("dark"),
 		glamour.WithWordWrap(width),
 	)
-	fmt.Fprintf(os.Stderr, "[DEBUG] NewTermRenderer took %v\n", time.Since(start))
-
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[DEBUG] NewTermRenderer error: %v\n", err)
 		return wrapText(content, width)
 	}
 
-	start = time.Now()
 	rendered, err := renderer.Render(content)
-	fmt.Fprintf(os.Stderr, "[DEBUG] Render took %v\n", time.Since(start))
-
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[DEBUG] Render error: %v\n", err)
 		return wrapText(content, width)
 	}
 
