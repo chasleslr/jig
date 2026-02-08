@@ -286,3 +286,29 @@ func TestPlanStatusManager_InProgressToComplete(t *testing.T) {
 		t.Errorf("plan.Status = %v, want %v", p.Status, plan.StatusComplete)
 	}
 }
+
+func TestPlanStatusManager_TransitionTo_CacheError(t *testing.T) {
+	// Create a cache with a non-existent directory to force save failure
+	cache := &Cache{dir: "/nonexistent/path/that/does/not/exist"}
+
+	mgr := NewPlanStatusManager(cache, nil)
+
+	p := createTestPlan("test-cache-error", plan.StatusInProgress)
+
+	result, err := mgr.TransitionTo(context.Background(), p, plan.StatusComplete)
+
+	// Should return error for cache failure
+	if err == nil {
+		t.Error("TransitionTo() should return error when cache save fails")
+	}
+
+	// Status should be rolled back
+	if p.Status != plan.StatusInProgress {
+		t.Errorf("plan.Status should be rolled back to %v, got %v", plan.StatusInProgress, p.Status)
+	}
+
+	// Result should indicate cache was not saved
+	if result.CacheSaved {
+		t.Error("CacheSaved should be false when cache save fails")
+	}
+}
