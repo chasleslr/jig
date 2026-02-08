@@ -3,3 +3,6 @@ coverage:
     patch:
       default:
         target: 90%
+
+ignore:
+  - "internal/git/client.go"  # RealClient methods are thin wrappers requiring gh CLI
