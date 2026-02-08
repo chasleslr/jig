@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/charleslr/jig/internal/tracker"
 )
 
 // TestGetIssueByIdentifier_NumberType verifies that the issue number is sent as
@@ -206,4 +208,86 @@ func containsAt(s, substr string, start int) bool {
 		}
 	}
 	return false
+}
+
+// TestStatusMatches_InProgressExcludesReview verifies that StatusInProgress does not match
+// states with "review" in the name. This is a regression test for a bug where "In Review"
+// states (type: "started", name contains "review") would incorrectly match StatusInProgress.
+func TestStatusMatches_InProgressExcludesReview(t *testing.T) {
+	tests := []struct {
+		name          string
+		state         LinearWorkflowState
+		status        tracker.Status
+		expectedMatch bool
+	}{
+		{
+			name:          "InProgress matches started state without review",
+			state:         LinearWorkflowState{ID: "1", Name: "In Progress", Type: "started"},
+			status:        tracker.StatusInProgress,
+			expectedMatch: true,
+		},
+		{
+			name:          "InProgress does not match state with review in name",
+			state:         LinearWorkflowState{ID: "2", Name: "In Review", Type: "started"},
+			status:        tracker.StatusInProgress,
+			expectedMatch: false,
+		},
+		{
+			name:          "InProgress does not match state with Review (capitalized)",
+			state:         LinearWorkflowState{ID: "3", Name: "Code Review", Type: "started"},
+			status:        tracker.StatusInProgress,
+			expectedMatch: false,
+		},
+		{
+			name:          "InReview matches state with review in name",
+			state:         LinearWorkflowState{ID: "4", Name: "In Review", Type: "started"},
+			status:        tracker.StatusInReview,
+			expectedMatch: true,
+		},
+		{
+			name:          "InReview does not match state without review in name",
+			state:         LinearWorkflowState{ID: "5", Name: "In Progress", Type: "started"},
+			status:        tracker.StatusInReview,
+			expectedMatch: false,
+		},
+		{
+			name:          "InProgress does not match non-started state",
+			state:         LinearWorkflowState{ID: "6", Name: "Backlog", Type: "backlog"},
+			status:        tracker.StatusInProgress,
+			expectedMatch: false,
+		},
+		{
+			name:          "Backlog matches backlog state",
+			state:         LinearWorkflowState{ID: "7", Name: "Backlog", Type: "backlog"},
+			status:        tracker.StatusBacklog,
+			expectedMatch: true,
+		},
+		{
+			name:          "Todo matches unstarted state",
+			state:         LinearWorkflowState{ID: "8", Name: "Todo", Type: "unstarted"},
+			status:        tracker.StatusTodo,
+			expectedMatch: true,
+		},
+		{
+			name:          "Done matches completed state",
+			state:         LinearWorkflowState{ID: "9", Name: "Done", Type: "completed"},
+			status:        tracker.StatusDone,
+			expectedMatch: true,
+		},
+		{
+			name:          "Canceled matches canceled state",
+			state:         LinearWorkflowState{ID: "10", Name: "Canceled", Type: "canceled"},
+			status:        tracker.StatusCanceled,
+			expectedMatch: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := statusMatches(tt.state, tt.status)
+			if got != tt.expectedMatch {
+				t.Errorf("statusMatches(%+v, %v) = %v, want %v", tt.state, tt.status, got, tt.expectedMatch)
+			}
+		})
+	}
 }
