@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/charleslr/jig/internal/tracker"
@@ -164,6 +165,12 @@ func ShowIssue(issue *tracker.Issue) error {
 // RenderIssueContext returns a formatted string of the issue context
 // suitable for display in a non-interactive context
 func RenderIssueContext(issue *tracker.Issue) string {
+	return RenderIssueContextWithWidth(issue, 80)
+}
+
+// RenderIssueContextWithWidth returns a formatted string of the issue context
+// with a specified width for markdown rendering
+func RenderIssueContextWithWidth(issue *tracker.Issue, width int) string {
 	var b strings.Builder
 
 	b.WriteString(fmt.Sprintf("%s - %s\n", issue.Identifier, issue.Title))
@@ -178,7 +185,7 @@ func RenderIssueContext(issue *tracker.Issue) string {
 
 	if issue.Description != "" {
 		b.WriteString("\nDescription:\n")
-		b.WriteString(wrapText(issue.Description, 60))
+		b.WriteString(renderMarkdown(issue.Description, width))
 		b.WriteString("\n")
 	}
 
@@ -187,6 +194,26 @@ func RenderIssueContext(issue *tracker.Issue) string {
 	}
 
 	return b.String()
+}
+
+// renderMarkdown renders markdown content using glamour
+// Falls back to plain text wrapping if glamour fails
+func renderMarkdown(content string, width int) string {
+	// Use WithStandardStyle("dark") instead of WithAutoStyle() which is slow inside bubbletea
+	renderer, err := glamour.NewTermRenderer(
+		glamour.WithStandardStyle("dark"),
+		glamour.WithWordWrap(width),
+	)
+	if err != nil {
+		return wrapText(content, width)
+	}
+
+	rendered, err := renderer.Render(content)
+	if err != nil {
+		return wrapText(content, width)
+	}
+
+	return strings.TrimSpace(rendered)
 }
 
 // wrapText wraps text to the specified width

@@ -3,6 +3,7 @@ package ui
 import (
 	"strings"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -61,7 +62,12 @@ type PlanPromptModel struct {
 	quitting     bool
 
 	// Sub-models
-	textArea TextAreaModel
+	textArea         TextAreaModel
+	contextViewport  viewport.Model
+	contextReady     bool
+	contextContent   string // Cached rendered content
+	width            int
+	height           int
 }
 
 type menuOption struct {
@@ -91,6 +97,28 @@ func (m PlanPromptModel) Init() tea.Cmd {
 
 // Update implements tea.Model
 func (m PlanPromptModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Handle window size for all states
+	if msg, ok := msg.(tea.WindowSizeMsg); ok {
+		m.width = msg.Width
+		m.height = msg.Height
+		headerHeight := 4 // Title + separator + padding
+		footerHeight := 3 // Help text + padding
+
+		if !m.contextReady {
+			m.contextViewport = viewport.New(msg.Width, msg.Height-headerHeight-footerHeight)
+			m.contextViewport.YPosition = headerHeight
+			m.contextReady = true
+		} else {
+			m.contextViewport.Width = msg.Width
+			m.contextViewport.Height = msg.Height - headerHeight - footerHeight
+		}
+
+		// Update viewport content if we're in context view and have cached content
+		if m.state == stateViewContext && m.contextContent != "" {
+			m.contextViewport.SetContent(m.contextContent)
+		}
+	}
+
 	switch m.state {
 	case stateMenu:
 		return m.updateMenu(msg)
@@ -134,6 +162,14 @@ func (m PlanPromptModel) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			case PlanPromptActionViewContext:
 				m.state = stateViewContext
+				// Render content once and cache it
+				if m.contextContent == "" {
+					m.contextContent = m.renderContextContent()
+				}
+				if m.contextReady {
+					m.contextViewport.SetContent(m.contextContent)
+					m.contextViewport.GotoTop()
+				}
 				return m, nil
 
 			case PlanPromptActionAddInstructions:
@@ -153,16 +189,21 @@ func (m PlanPromptModel) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m PlanPromptModel) updateViewContext(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "esc", "enter", " ":
+		case "q", "esc":
 			// Return to menu
 			m.state = stateMenu
 			return m, nil
 		}
 	}
-	return m, nil
+
+	// Handle viewport updates (scrolling)
+	m.contextViewport, cmd = m.contextViewport.Update(msg)
+	return m, cmd
 }
 
 func (m PlanPromptModel) updateAddInstructions(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -288,17 +329,33 @@ func (m PlanPromptModel) viewMenu() string {
 func (m PlanPromptModel) viewContext() string {
 	var b strings.Builder
 
+	// Header
 	b.WriteString(planPromptTitleStyle.Render("Issue Context"))
 	b.WriteString("\n")
 	b.WriteString(strings.Repeat("─", 60))
 	b.WriteString("\n\n")
 
-	b.WriteString(RenderIssueContext(m.issue))
+	// Use cached content if available, otherwise render
+	if m.contextContent != "" {
+		b.WriteString(m.contextContent)
+	} else {
+		b.WriteString(m.renderContextContent())
+	}
 
+	// Footer with help
 	b.WriteString("\n")
-	b.WriteString(unselectedStyle.Render("Press any key to return to menu"))
+	b.WriteString(unselectedStyle.Render("q/esc to return to menu"))
 
 	return b.String()
+}
+
+// renderContextContent renders the issue context for the viewport
+func (m PlanPromptModel) renderContextContent() string {
+	width := m.width
+	if width <= 0 {
+		width = 80
+	}
+	return RenderIssueContextWithWidth(m.issue, width)
 }
 
 func (m PlanPromptModel) viewAddInstructions() string {

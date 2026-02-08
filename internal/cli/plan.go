@@ -333,42 +333,38 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 	// Get issue context if provided
 	if len(args) > 0 {
 		issueID = args[0]
-		printInfo(fmt.Sprintf("Fetching issue context for %s...", issueID))
 
-		t, err := getTracker(cfg)
-		if err != nil {
-			printWarning(fmt.Sprintf("Could not connect to tracker: %v", err))
+		// Fetch issue with spinner for better UX during API latency
+		fetchResult := fetchIssueWithDeps(ctx, issueID, defaultIssueFetchDeps(cfg))
+		issue = fetchResult.Issue
+
+		if fetchResult.Err != nil {
+			printWarning(fmt.Sprintf("Could not fetch issue: %v", fetchResult.Err))
 		} else {
-			issue, err = t.GetIssue(ctx, issueID)
-			if err != nil {
-				printWarning(fmt.Sprintf("Could not fetch issue: %v", err))
-			} else {
-				// Show interactive menu if we have an issue and are in interactive mode
-				if ui.IsInteractive() {
-					result, err := ui.RunPlanPrompt(issue)
-					if err != nil {
-						return fmt.Errorf("failed to run plan prompt: %w", err)
-					}
-
-					if result.Action == ui.PlanPromptActionCancel {
-						return nil // User cancelled
-					}
-
-					// Collect any additional instructions
-					additionalInstructions = result.Instructions
-
-					// Show confirmation of what was captured
-					printSuccess(fmt.Sprintf("Issue loaded: %s", issue.Identifier))
-					if additionalInstructions != "" {
-						printInfo("Custom instructions added")
-					}
+			// Show interactive menu if we have an issue and are in interactive mode
+			if ui.IsInteractive() {
+				result, err := ui.RunPlanPrompt(issue)
+				if err != nil {
+					return fmt.Errorf("failed to run plan prompt: %w", err)
 				}
 
-				issueContext = formatIssueContext(issue)
-				if planNewTitle == "" {
-					planNewTitle = issue.Title
+				if result.Action == ui.PlanPromptActionCancel {
+					return nil // User cancelled
+				}
+
+				// Collect any additional instructions
+				additionalInstructions = result.Instructions
+
+				// Show confirmation of what was captured
+				printSuccess(fmt.Sprintf("Issue loaded: %s", issue.Identifier))
+				if additionalInstructions != "" {
+					printInfo("Custom instructions added")
 				}
 			}
+
+			result := processIssueForPlan(issue, planNewTitle)
+			issueContext = result.IssueContext
+			planNewTitle = result.Title
 		}
 	}
 
@@ -531,6 +527,78 @@ func getTracker(cfg *config.Config) (tracker.Tracker, error) {
 	default:
 		return nil, fmt.Errorf("unknown tracker: %s", cfg.Default.Tracker)
 	}
+}
+
+// issueResult holds the result of processing a fetched issue
+type issueResult struct {
+	IssueContext string
+	Title        string // Updated title (from issue if original was empty)
+}
+
+// issueFetchDeps holds injectable dependencies for fetching issues
+type issueFetchDeps struct {
+	isInteractive func() bool
+	runSpinner    func(message string, fn func() error) error
+	getTracker    func() (tracker.Tracker, error)
+}
+
+// fetchIssueResult holds the result of fetching an issue
+type fetchIssueResult struct {
+	Issue *tracker.Issue
+	Err   error
+}
+
+// fetchIssueWithDeps fetches an issue using the provided dependencies.
+// In interactive mode, it uses a spinner for better UX during API latency.
+// In non-interactive mode, it fetches directly.
+func fetchIssueWithDeps(ctx context.Context, issueID string, deps issueFetchDeps) fetchIssueResult {
+	var issue *tracker.Issue
+	var fetchErr error
+
+	if deps.isInteractive() {
+		fetchErr = deps.runSpinner(fmt.Sprintf("Fetching issue %s", issueID), func() error {
+			t, err := deps.getTracker()
+			if err != nil {
+				return err
+			}
+			issue, err = t.GetIssue(ctx, issueID)
+			return err
+		})
+	} else {
+		t, err := deps.getTracker()
+		if err != nil {
+			fetchErr = err
+		} else {
+			issue, fetchErr = t.GetIssue(ctx, issueID)
+		}
+	}
+
+	return fetchIssueResult{Issue: issue, Err: fetchErr}
+}
+
+// defaultIssueFetchDeps returns the production dependencies for fetching issues
+func defaultIssueFetchDeps(cfg *config.Config) issueFetchDeps {
+	return issueFetchDeps{
+		isInteractive: ui.IsInteractive,
+		runSpinner:    ui.RunWithSpinner,
+		getTracker:    func() (tracker.Tracker, error) { return getTracker(cfg) },
+	}
+}
+
+// processIssueForPlan processes a successfully fetched issue and returns
+// the issue context and updated title for use in plan creation.
+// If currentTitle is non-empty, it is preserved; otherwise the issue's title is used.
+func processIssueForPlan(issue *tracker.Issue, currentTitle string) issueResult {
+	result := issueResult{
+		IssueContext: formatIssueContext(issue),
+		Title:        currentTitle,
+	}
+
+	if currentTitle == "" {
+		result.Title = issue.Title
+	}
+
+	return result
 }
 
 // formatIssueContext formats an issue for inclusion in a prompt
