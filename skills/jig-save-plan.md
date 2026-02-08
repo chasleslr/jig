@@ -18,15 +18,8 @@ id: PLAN-123
 title: Your Plan Title
 status: draft
 author: username
-phases:
-  - id: phase-1
-    title: Phase 1 Title
-    status: pending
-    depends_on: []
-  - id: phase-2
-    title: Phase 2 Title
-    status: pending
-    depends_on: [phase-1]
+reviewers:
+  default: [lead]
 ---
 
 # Your Plan Title
@@ -39,32 +32,15 @@ phases:
 
 [High-level approach]
 
-## Phases
-
-### Phase 1: Phase 1 Title
-
-**Dependencies:** None
-
-#### Acceptance Criteria
+## Acceptance Criteria
 
 - [ ] Criterion 1
 - [ ] Criterion 2
+- [ ] Criterion 3
 
-#### Implementation Details
+## Implementation Details
 
-[Details for this phase]
-
-### Phase 2: Phase 2 Title
-
-**Dependencies:** Phase 1
-
-#### Acceptance Criteria
-
-- [ ] Criterion 1
-
-#### Implementation Details
-
-[Details for this phase]
+[Details for implementing this plan]
 ```
 
 ## How to Save

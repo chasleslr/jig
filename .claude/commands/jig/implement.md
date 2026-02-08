@@ -10,7 +10,7 @@ Implement a plan - either from a cached plan, a linked tracker issue, or the cur
 This is the primary implementation workflow - it orchestrates:
 
 1. Reading the plan and setting up implementation context
-2. Executing each phase with proper tracking
+2. Executing the implementation with proper tracking
 3. Running tests and verifying changes
 4. Guiding through PR creation
 
@@ -66,50 +66,50 @@ Read the plan carefully to understand:
 
 - **Problem Statement**: What problem are we solving?
 - **Proposed Solution**: What's the high-level approach?
-- **Phases**: What are the implementation phases?
-- **Acceptance Criteria**: What defines success for each phase?
-- **Dependencies**: Which phases depend on others?
+- **Acceptance Criteria**: What defines success?
+- **Implementation Details**: What specific changes are needed?
 
 ### Step 2: Create TodoWrite Entries
 
 Create todo entries for the implementation using TodoWrite:
 
-1. One todo per phase from the plan
-2. Include a final todo for "Run tests and verify"
-3. Include a todo for "Create PR" (if applicable)
+1. Break down the implementation details into logical tasks
+2. Include a todo for each acceptance criterion to verify
+3. Include a final todo for "Run tests and verify"
+4. Include a todo for "Create PR" (if applicable)
 
 Example:
 ```
-- Phase 1: Set up data models
-- Phase 2: Implement API endpoints
-- Phase 3: Add frontend components
+- Implement data models
+- Add API endpoints
+- Update frontend components
+- Verify all acceptance criteria
 - Run tests and verify all changes
 - Create PR
 ```
 
-### Step 3: Execute Each Phase Sequentially
+### Step 3: Execute Implementation
 
-For each phase:
+For each task:
 
-1. **Mark phase as in_progress** (in TodoWrite)
+1. **Mark task as in_progress** (in TodoWrite)
 
-2. **Read phase requirements** carefully:
-   - Acceptance criteria (what must be true when done)
-   - Implementation details (how to do it)
-   - Dependencies (what must be done first)
+2. **Read task requirements** carefully:
+   - What must be true when done
+   - Implementation details from the plan
 
-3. **Implement the phase**:
+3. **Implement the task**:
    - Write clean, well-tested code
    - Follow project conventions (check AGENTS.md if present)
    - Make atomic commits as you go
    - Ensure tests pass before moving on
 
-4. **Verify acceptance criteria**:
-   - Check each criterion is met
+4. **Verify the work**:
+   - Check that the task is complete
    - Run relevant tests
    - Fix any issues before proceeding
 
-5. **Mark phase as completed** (in TodoWrite)
+5. **Mark task as completed** (in TodoWrite)
 
 6. **Report progress**:
    - What was implemented
@@ -122,7 +122,7 @@ Follow these principles:
 
 1. **Follow the plan exactly**: The plan was carefully designed. Don't deviate unless absolutely necessary.
 
-2. **One phase at a time**: Complete each phase fully before starting the next.
+2. **One task at a time**: Complete each task fully before starting the next.
 
 3. **Test as you go**: Run tests after each significant change. Don't accumulate untested changes.
 
@@ -134,7 +134,7 @@ Follow these principles:
 
 ### Step 5: Run Tests and Verify
 
-After all phases are complete:
+After all tasks are complete:
 
 1. **Run the full test suite**:
    - Check AGENTS.md or project docs for test commands
@@ -145,7 +145,7 @@ After all phases are complete:
    - Fix any formatting issues
 
 3. **Verify all acceptance criteria**:
-   - Go through each phase's acceptance criteria
+   - Go through each acceptance criterion from the plan
    - Confirm all are met
 
 4. **Check for regressions**:
@@ -187,7 +187,6 @@ gh pr create --draft --title "<title>" --body "<body>"
 ## Output Format
 
 - **Start**: "Starting implementation for [plan title]..."
-- **Each phase**: "Phase X: [title] - [brief status]"
 - **Progress**: Show what's being done, files being modified
 - **End**: "Implementation complete. Summary: [changes made]"
 
@@ -195,8 +194,7 @@ gh pr create --draft --title "<title>" --body "<body>"
 
 ## Important Rules
 
-1. **Never skip phases**: Execute all phases in order
-2. **Never modify the plan**: The plan is immutable during implementation
-3. **Always run tests**: Don't consider a phase complete until tests pass
-4. **Commit frequently**: Make atomic commits for each logical unit
-5. **Report blockers**: If blocked, report clearly and wait for guidance
+1. **Never modify the plan**: The plan is immutable during implementation
+2. **Always run tests**: Don't consider a task complete until tests pass
+3. **Commit frequently**: Make atomic commits for each logical unit
+4. **Report blockers**: If blocked, report clearly and wait for guidance

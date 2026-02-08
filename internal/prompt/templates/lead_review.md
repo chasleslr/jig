@@ -18,18 +18,6 @@ You are reviewing a technical plan as a lead engineer. Your goal is to ensure th
 {{.Plan.ProposedSolution}}
 {{end}}
 
-{{if hasPhases .Plan}}
-### Phases
-{{range $i, $phase := .Plan.Phases}}
-#### Phase {{$i | printf "%d"}}: {{$phase.Title}}
-{{if $phase.Description}}{{$phase.Description}}{{end}}
-{{if $phase.DependsOn}}**Depends on:** {{join $phase.DependsOn ", "}}{{end}}
-{{if $phase.Acceptance}}
-**Acceptance Criteria:**
-{{range $phase.Acceptance}}- {{.}}
-{{end}}{{end}}
-{{end}}
-{{end}}
 {{end}}
 
 ## Review Checklist

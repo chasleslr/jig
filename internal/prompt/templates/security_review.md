@@ -18,17 +18,6 @@ You are reviewing a technical plan from a security perspective. Your goal is to 
 {{.Plan.ProposedSolution}}
 {{end}}
 
-{{if hasPhases .Plan}}
-### Phases
-{{range $i, $phase := .Plan.Phases}}
-#### Phase {{$i | printf "%d"}}: {{$phase.Title}}
-{{if $phase.Description}}{{$phase.Description}}{{end}}
-{{if $phase.Acceptance}}
-**Acceptance Criteria:**
-{{range $phase.Acceptance}}- {{.}}
-{{end}}{{end}}
-{{end}}
-{{end}}
 {{end}}
 
 ## Security Review Checklist
