@@ -953,7 +953,7 @@ func statusMatches(state LinearWorkflowState, status tracker.Status) bool {
 	case tracker.StatusTodo:
 		return state.Type == "unstarted"
 	case tracker.StatusInProgress:
-		return state.Type == "started"
+		return state.Type == "started" && !strings.Contains(strings.ToLower(state.Name), "review")
 	case tracker.StatusInReview:
 		return state.Type == "started" && strings.Contains(strings.ToLower(state.Name), "review")
 	case tracker.StatusDone:
