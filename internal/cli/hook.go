@@ -252,9 +252,13 @@ func createSessionMarker(sessionID, name string) error {
 	return os.WriteFile(path, []byte{}, 0644)
 }
 
-// HookOutput represents the JSON output for Claude Code hooks
+// HookSpecificOutput represents the inner payload for Claude Code hook responses
 // When permissionDecision is set, it overrides Claude's default permission behavior
-type HookOutput struct {
+type HookSpecificOutput struct {
+	// HookEventName identifies which hook event this response is for
+	// Values: "PreToolUse", "PostToolUse", etc.
+	HookEventName string `json:"hookEventName"`
+
 	// PermissionDecision controls whether the tool is allowed to run
 	// Values: "allow", "deny"
 	PermissionDecision string `json:"permissionDecision,omitempty"`
@@ -264,11 +268,21 @@ type HookOutput struct {
 	PermissionDecisionReason string `json:"permissionDecisionReason,omitempty"`
 }
 
+// HookOutput represents the JSON output for Claude Code hooks
+// The response must be wrapped in hookSpecificOutput per the Claude Code protocol
+type HookOutput struct {
+	HookSpecificOutput HookSpecificOutput `json:"hookSpecificOutput"`
+}
+
 // outputHookResponse outputs a JSON hook response to stdout
+// The response uses the hookSpecificOutput wrapper format required by Claude Code
 func outputHookResponse(decision, reason string) {
 	output := HookOutput{
-		PermissionDecision:       decision,
-		PermissionDecisionReason: reason,
+		HookSpecificOutput: HookSpecificOutput{
+			HookEventName:            "PreToolUse",
+			PermissionDecision:       decision,
+			PermissionDecisionReason: reason,
+		},
 	}
 	data, _ := json.Marshal(output)
 	fmt.Println(string(data))
