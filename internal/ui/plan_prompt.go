@@ -361,11 +361,16 @@ func (m PlanPromptModel) viewContext() string {
 
 // renderContextContent renders the issue context for the viewport
 func (m PlanPromptModel) renderContextContent() string {
+	fmt.Fprintf(os.Stderr, "[DEBUG] renderContextContent start\n")
 	width := m.width
 	if width <= 0 {
 		width = 80
 	}
-	return RenderIssueContextWithWidth(m.issue, width)
+	fmt.Fprintf(os.Stderr, "[DEBUG] calling RenderIssueContextWithWidth with width=%d\n", width)
+	start := time.Now()
+	result := RenderIssueContextWithWidth(m.issue, width)
+	fmt.Fprintf(os.Stderr, "[DEBUG] RenderIssueContextWithWidth took %v\n", time.Since(start))
+	return result
 }
 
 func (m PlanPromptModel) viewAddInstructions() string {
