@@ -19,13 +19,6 @@ type Frontmatter struct {
 	Created   string    `yaml:"created"`
 	Author    string    `yaml:"author"`
 	Reviewers Reviewers `yaml:"reviewers"`
-	Phases    []struct {
-		ID        string      `yaml:"id"`
-		Title     string      `yaml:"title"`
-		IssueID   string      `yaml:"issue_id,omitempty"`
-		Status    PhaseStatus `yaml:"status"`
-		DependsOn []string    `yaml:"depends_on,omitempty"`
-	} `yaml:"phases"`
 }
 
 // ParseFile reads and parses a plan from a file
@@ -68,18 +61,6 @@ func Parse(data []byte) (*Plan, error) {
 		// The time is stored in the frontmatter
 	}
 
-	// Convert phases
-	for _, ph := range fm.Phases {
-		phase := &Phase{
-			ID:        ph.ID,
-			Title:     ph.Title,
-			IssueID:   ph.IssueID,
-			Status:    ph.Status,
-			DependsOn: ph.DependsOn,
-		}
-		plan.Phases = append(plan.Phases, phase)
-	}
-
 	// Parse markdown body
 	body := string(rest)
 	parseMarkdownBody(plan, body)
@@ -106,11 +87,6 @@ func parseMarkdownBody(plan *Plan, body string) {
 
 		case strings.Contains(headerLower, "review"):
 			parseReviewNotes(plan, section.Content)
-
-		case strings.Contains(headerLower, "phase"):
-			// Phase details are already in frontmatter, but we can parse
-			// additional details from the body
-			parsePhaseDetails(plan, section.Content)
 		}
 	}
 }
@@ -188,57 +164,6 @@ func parseReviewNotes(plan *Plan, content string) {
 	}
 }
 
-// parsePhaseDetails extracts additional phase details from markdown body
-func parsePhaseDetails(plan *Plan, content string) {
-	// Look for phase subsections and acceptance criteria
-	sections := splitSections(content)
-
-	for _, section := range sections {
-		// Try to match phase by title
-		for _, phase := range plan.Phases {
-			if strings.Contains(strings.ToLower(section.Header), strings.ToLower(phase.Title)) {
-				phase.Description = extractDescription(section.Content)
-				phase.Acceptance = extractAcceptanceCriteria(section.Content)
-				break
-			}
-		}
-	}
-}
-
-// extractDescription extracts the description from phase content
-func extractDescription(content string) string {
-	// Description is text before "Acceptance Criteria" or similar headers
-	lines := strings.Split(content, "\n")
-	var desc []string
-
-	for _, line := range lines {
-		lineLower := strings.ToLower(line)
-		if strings.HasPrefix(line, "#") || strings.Contains(lineLower, "acceptance") {
-			break
-		}
-		desc = append(desc, line)
-	}
-
-	return strings.TrimSpace(strings.Join(desc, "\n"))
-}
-
-// extractAcceptanceCriteria extracts checkbox items as acceptance criteria
-func extractAcceptanceCriteria(content string) []string {
-	var criteria []string
-
-	// Match markdown checkboxes: - [ ] item or - [x] item
-	checkboxRegex := regexp.MustCompile(`(?m)^-\s*\[[x ]\]\s*(.+)$`)
-	matches := checkboxRegex.FindAllStringSubmatch(content, -1)
-
-	for _, match := range matches {
-		if len(match) >= 2 {
-			criteria = append(criteria, strings.TrimSpace(match[1]))
-		}
-	}
-
-	return criteria
-}
-
 // ValidateStructure validates that the plan markdown has the required structure
 func ValidateStructure(data []byte) error {
 	// Parse frontmatter
@@ -309,22 +234,6 @@ func Serialize(plan *Plan) ([]byte, error) {
 		Reviewers: plan.Reviewers,
 	}
 
-	for _, phase := range plan.Phases {
-		fm.Phases = append(fm.Phases, struct {
-			ID        string      `yaml:"id"`
-			Title     string      `yaml:"title"`
-			IssueID   string      `yaml:"issue_id,omitempty"`
-			Status    PhaseStatus `yaml:"status"`
-			DependsOn []string    `yaml:"depends_on,omitempty"`
-		}{
-			ID:        phase.ID,
-			Title:     phase.Title,
-			IssueID:   phase.IssueID,
-			Status:    phase.Status,
-			DependsOn: phase.DependsOn,
-		})
-	}
-
 	buf.WriteString("---\n")
 	yamlData, err := yaml.Marshal(fm)
 	if err != nil {
@@ -348,39 +257,6 @@ func Serialize(plan *Plan) ([]byte, error) {
 		buf.WriteString("## Proposed Solution\n\n")
 		buf.WriteString(plan.ProposedSolution)
 		buf.WriteString("\n\n")
-	}
-
-	// Write phases
-	if len(plan.Phases) > 0 {
-		buf.WriteString("## Phases\n\n")
-		for _, phase := range plan.Phases {
-			buf.WriteString(fmt.Sprintf("### %s\n\n", phase.Title))
-
-			if len(phase.DependsOn) > 0 {
-				buf.WriteString(fmt.Sprintf("**Dependencies:** %s\n", strings.Join(phase.DependsOn, ", ")))
-			} else {
-				buf.WriteString("**Dependencies:** None\n")
-			}
-
-			if phase.Branch != "" {
-				buf.WriteString(fmt.Sprintf("**Branch:** `%s`\n", phase.Branch))
-			}
-			buf.WriteString("\n")
-
-			if len(phase.Acceptance) > 0 {
-				buf.WriteString("#### Acceptance Criteria\n\n")
-				for _, ac := range phase.Acceptance {
-					buf.WriteString(fmt.Sprintf("- [ ] %s\n", ac))
-				}
-				buf.WriteString("\n")
-			}
-
-			if phase.Description != "" {
-				buf.WriteString("#### Implementation Details\n\n")
-				buf.WriteString(phase.Description)
-				buf.WriteString("\n\n")
-			}
-		}
 	}
 
 	// Write Q&A

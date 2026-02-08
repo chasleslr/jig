@@ -178,7 +178,6 @@ func runPlanSave(cmd *cobra.Command, args []string) error {
 
 	printSuccess(fmt.Sprintf("Plan saved: %s", p.ID))
 	fmt.Printf("  Title: %s\n", p.Title)
-	fmt.Printf("  Phases: %d\n", len(p.Phases))
 	fmt.Printf("\nNext steps:\n")
 	fmt.Printf("  - View plan: jig plan show %s\n", p.ID)
 	fmt.Printf("  - Start implementation: jig implement %s\n", p.ID)
@@ -268,14 +267,10 @@ func runPlanList(cmd *cobra.Command, args []string) error {
 		if status == "" {
 			status = "draft"
 		}
-		phases := fmt.Sprintf("%d phases", len(p.Phases))
-		if len(p.Phases) == 1 {
-			phases = "1 phase"
-		}
 
 		fmt.Printf("  %s\n", p.ID)
 		fmt.Printf("    Title: %s\n", p.Title)
-		fmt.Printf("    Status: %s | %s\n", status, phases)
+		fmt.Printf("    Status: %s\n", status)
 		fmt.Println()
 	}
 

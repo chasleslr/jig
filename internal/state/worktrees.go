@@ -23,7 +23,6 @@ type WorktreeInfo struct {
 	Branch     string    `json:"branch"`
 	RepoPath   string    `json:"repo_path"`
 	PlanID     string    `json:"plan_id,omitempty"`
-	PhaseID    string    `json:"phase_id,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
 	LastUsedAt time.Time `json:"last_used_at"`
 }
