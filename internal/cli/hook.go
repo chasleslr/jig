@@ -1,12 +1,26 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"time"
 
 	"github.com/spf13/cobra"
 )
+
+// HookInput represents the JSON input from Claude Code hooks
+type HookInput struct {
+	SessionID      string `json:"session_id"`
+	TranscriptPath string `json:"transcript_path"`
+	Cwd            string `json:"cwd"`
+	PermissionMode string `json:"permission_mode"`
+	HookEventName  string `json:"hook_event_name"`
+	ToolName       string `json:"tool_name,omitempty"`
+}
 
 var hookCmd = &cobra.Command{
 	Use:    "hook",
@@ -27,6 +41,10 @@ var hookMarkSkipSaveCmd = &cobra.Command{
 	Short:  "Mark that user wants to skip saving",
 	Hidden: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		sessionID, _ := cmd.Flags().GetString("session")
+		if sessionID != "" {
+			return createSessionMarker(sessionID, "skip-save")
+		}
 		return createMarker("skip-save")
 	},
 }
@@ -36,6 +54,10 @@ var hookMarkPlanSavedCmd = &cobra.Command{
 	Short:  "Mark that plan has been saved",
 	Hidden: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		sessionID, _ := cmd.Flags().GetString("session")
+		if sessionID != "" {
+			return createSessionMarker(sessionID, "plan-saved")
+		}
 		return createMarker("plan-saved")
 	},
 }
@@ -44,26 +66,66 @@ func init() {
 	hookCmd.AddCommand(hookExitPlanModeCmd)
 	hookCmd.AddCommand(hookMarkSkipSaveCmd)
 	hookCmd.AddCommand(hookMarkPlanSavedCmd)
+
+	// Add session flag to marker commands for session-scoped markers
+	hookMarkSkipSaveCmd.Flags().String("session", "", "Session ID for session-scoped markers")
+	hookMarkPlanSavedCmd.Flags().String("session", "", "Session ID for session-scoped markers")
+}
+
+// readHookInput reads and parses the JSON input from Claude Code via stdin
+func readHookInput() (*HookInput, error) {
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read stdin: %w", err)
+	}
+
+	// If stdin is empty, return an empty HookInput (for backward compatibility)
+	if len(data) == 0 {
+		return &HookInput{}, nil
+	}
+
+	var input HookInput
+	if err := json.Unmarshal(data, &input); err != nil {
+		return nil, fmt.Errorf("failed to parse hook input JSON: %w", err)
+	}
+
+	return &input, nil
 }
 
 func runHookExitPlanMode(cmd *cobra.Command, args []string) error {
-	// Check for plan file in current directory
-	planFile := findPlanFile()
+	// Read JSON input from Claude Code via stdin
+	hookInput, err := readHookInput()
+	if err != nil {
+		// Log error but continue with empty input for backward compatibility
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+		hookInput = &HookInput{}
+	}
 
-	// Check for "plan saved" marker
-	markerPath := getMarkerPath("plan-saved")
+	// Get session ID for session-scoped markers
+	sessionID := hookInput.SessionID
+
+	// Check for "plan saved" marker (session-scoped if we have session ID)
+	markerPath := getSessionMarkerPath(sessionID, "plan-saved")
 	if _, err := os.Stat(markerPath); err == nil {
-		// Plan already saved, allow exit
+		// Plan already saved, allow exit and clean up marker
+		os.Remove(markerPath)
 		fmt.Println("Plan has been saved. You may now exit plan mode.")
 		return nil // exit 0 = allow
 	}
 
 	// Check for "skip save" marker (user chose not to save)
-	skipMarkerPath := getMarkerPath("skip-save")
+	skipMarkerPath := getSessionMarkerPath(sessionID, "skip-save")
 	if _, err := os.Stat(skipMarkerPath); err == nil {
 		// User chose to skip, allow exit and clean up marker
 		os.Remove(skipMarkerPath)
 		return nil // exit 0 = allow
+	}
+
+	// Find plan file - first check ~/.claude/plans/ for recently modified plans
+	planFile := findClaudePlan(hookInput.SessionID)
+	if planFile == "" {
+		// Fall back to checking current directory
+		planFile = findPlanFile()
 	}
 
 	if planFile == "" {
@@ -72,7 +134,7 @@ func runHookExitPlanMode(cmd *cobra.Command, args []string) error {
 	}
 
 	// Plan exists but not saved - block and prompt user
-	fmt.Print(buildExitPlanModePrompt(planFile))
+	fmt.Fprint(os.Stderr, buildExitPlanModePrompt(planFile, sessionID))
 	os.Exit(2) // exit 2 = block
 	return nil
 }
@@ -96,7 +158,62 @@ func findPlanFile() string {
 	return ""
 }
 
-// getMarkerPath returns the path to a marker file
+// findClaudePlan looks for recently modified plan files in ~/.claude/plans/
+// It returns the most recently modified plan file from the last few minutes
+// Note: sessionID is currently unused but reserved for future session-specific plan lookup
+func findClaudePlan(_ string) string {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	plansDir := filepath.Join(homeDir, ".claude", "plans")
+	entries, err := os.ReadDir(plansDir)
+	if err != nil {
+		return ""
+	}
+
+	// Look for .md files modified in the last 5 minutes
+	cutoff := time.Now().Add(-5 * time.Minute)
+
+	type planFile struct {
+		path    string
+		modTime time.Time
+	}
+
+	var recentPlans []planFile
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".md" {
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		if info.ModTime().After(cutoff) {
+			recentPlans = append(recentPlans, planFile{
+				path:    filepath.Join(plansDir, entry.Name()),
+				modTime: info.ModTime(),
+			})
+		}
+	}
+
+	if len(recentPlans) == 0 {
+		return ""
+	}
+
+	// Sort by modification time, most recent first
+	sort.Slice(recentPlans, func(i, j int) bool {
+		return recentPlans[i].modTime.After(recentPlans[j].modTime)
+	})
+
+	// Return the most recently modified plan
+	return recentPlans[0].path
+}
+
+// getMarkerPath returns the path to a marker file (legacy, non-session-scoped)
 func getMarkerPath(name string) string {
 	// Store markers in .jig directory
 	jigDir := ".jig"
@@ -104,14 +221,44 @@ func getMarkerPath(name string) string {
 	return filepath.Join(jigDir, name+".marker")
 }
 
-// createMarker creates a marker file
+// getSessionMarkerPath returns the path to a session-scoped marker file
+// If sessionID is empty, falls back to non-session-scoped markers
+func getSessionMarkerPath(sessionID, name string) string {
+	if sessionID == "" {
+		return getMarkerPath(name)
+	}
+
+	// Store session-scoped markers in .jig/sessions/<session-id>/
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return getMarkerPath(name)
+	}
+
+	sessionsDir := filepath.Join(homeDir, ".jig", "sessions", sessionID)
+	os.MkdirAll(sessionsDir, 0755)
+	return filepath.Join(sessionsDir, name+".marker")
+}
+
+// createMarker creates a marker file (legacy, non-session-scoped)
 func createMarker(name string) error {
 	path := getMarkerPath(name)
 	return os.WriteFile(path, []byte{}, 0644)
 }
 
+// createSessionMarker creates a session-scoped marker file
+func createSessionMarker(sessionID, name string) error {
+	path := getSessionMarkerPath(sessionID, name)
+	return os.WriteFile(path, []byte{}, 0644)
+}
+
 // buildExitPlanModePrompt builds the prompt for Claude to show the user
-func buildExitPlanModePrompt(planFile string) string {
+func buildExitPlanModePrompt(planFile, sessionID string) string {
+	// Build the marker command with session ID if available
+	markSkipCmd := "jig hook mark-skip-save"
+	if sessionID != "" {
+		markSkipCmd = fmt.Sprintf("jig hook mark-skip-save --session %s", sessionID)
+	}
+
 	return fmt.Sprintf(`BLOCKED: Before exiting plan mode, ask the user what they want to do with their plan.
 
 Use the AskUserQuestion tool with these options:
@@ -131,7 +278,7 @@ Based on the user's choice:
   2. After saving, call ExitPlanMode again
 
 - If "Exit without saving":
-  1. Run: jig hook mark-skip-save
+  1. Run: %s
   2. Call ExitPlanMode again
-`, planFile)
+`, planFile, markSkipCmd)
 }
