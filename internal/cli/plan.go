@@ -334,10 +334,9 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 				}
 			}
 
-			issueContext = formatIssueContext(issue)
-			if planNewTitle == "" {
-				planNewTitle = issue.Title
-			}
+			result := processIssueForPlan(issue, planNewTitle)
+			issueContext = result.IssueContext
+			planNewTitle = result.Title
 		}
 	}
 
@@ -508,6 +507,28 @@ func getTracker(cfg *config.Config) (tracker.Tracker, error) {
 	default:
 		return nil, fmt.Errorf("unknown tracker: %s", cfg.Default.Tracker)
 	}
+}
+
+// issueResult holds the result of processing a fetched issue
+type issueResult struct {
+	IssueContext string
+	Title        string // Updated title (from issue if original was empty)
+}
+
+// processIssueForPlan processes a successfully fetched issue and returns
+// the issue context and updated title for use in plan creation.
+// If currentTitle is non-empty, it is preserved; otherwise the issue's title is used.
+func processIssueForPlan(issue *tracker.Issue, currentTitle string) issueResult {
+	result := issueResult{
+		IssueContext: formatIssueContext(issue),
+		Title:        currentTitle,
+	}
+
+	if currentTitle == "" {
+		result.Title = issue.Title
+	}
+
+	return result
 }
 
 // formatIssueContext formats an issue for inclusion in a prompt
