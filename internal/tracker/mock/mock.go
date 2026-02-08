@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/charleslr/jig/internal/plan"
 	"github.com/charleslr/jig/internal/tracker"
 )
 
@@ -284,4 +285,76 @@ func (c *Client) GetIssueByIdentifier(identifier string) *tracker.Issue {
 		}
 	}
 	return nil
+}
+
+// SyncPlan synchronizes a plan to the mock tracker, creating or updating the issue
+func (c *Client) SyncPlan(ctx context.Context, p *plan.Plan) error {
+	if p == nil {
+		return fmt.Errorf("plan is nil")
+	}
+
+	// Build description from plan
+	desc := ""
+	if p.ProblemStatement != "" {
+		desc += "## Problem Statement\n\n" + p.ProblemStatement + "\n\n"
+	}
+	if p.ProposedSolution != "" {
+		desc += "## Proposed Solution\n\n" + p.ProposedSolution + "\n\n"
+	}
+
+	// Check if issue exists
+	var existingIssue *tracker.Issue
+	if p.ID != "" {
+		existingIssue, _ = c.GetIssue(ctx, p.ID)
+	}
+
+	if existingIssue == nil {
+		// Create new issue
+		newIssue, err := c.CreateIssue(ctx, &tracker.Issue{
+			Title:       p.Title,
+			Description: desc,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create issue: %w", err)
+		}
+		p.ID = newIssue.Identifier
+	} else {
+		// Update existing issue
+		err := c.UpdateIssue(ctx, existingIssue.ID, &tracker.IssueUpdate{
+			Title:       &p.Title,
+			Description: &desc,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to update issue: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// SyncPlanStatus syncs a plan's status to the mock tracker
+func (c *Client) SyncPlanStatus(ctx context.Context, p *plan.Plan) error {
+	if p == nil {
+		return fmt.Errorf("plan is nil")
+	}
+	if p.ID == "" {
+		return fmt.Errorf("plan has no associated issue ID")
+	}
+
+	// Convert plan status to tracker status
+	var status tracker.Status
+	switch p.Status {
+	case plan.StatusDraft, plan.StatusReviewing, plan.StatusApproved:
+		status = tracker.StatusTodo
+	case plan.StatusInProgress:
+		status = tracker.StatusInProgress
+	case plan.StatusInReview:
+		status = tracker.StatusInReview
+	case plan.StatusComplete:
+		status = tracker.StatusDone
+	default:
+		status = tracker.StatusTodo
+	}
+
+	return c.TransitionIssue(ctx, p.ID, status)
 }

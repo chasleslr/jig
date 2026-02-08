@@ -16,6 +16,7 @@ type Config struct {
 	Runners map[string]RunnerSpec `mapstructure:"runners"`
 	Review  ReviewConfig          `mapstructure:"review"`
 	Git     GitConfig             `mapstructure:"git"`
+	Plan    PlanConfig            `mapstructure:"plan"`
 	Repos   map[string]RepoConfig `mapstructure:"repos"`
 }
 
@@ -48,6 +49,11 @@ type RunnerSpec struct {
 type ReviewConfig struct {
 	DefaultReviewers  []string `mapstructure:"default_reviewers"`
 	OptionalReviewers []string `mapstructure:"optional_reviewers"`
+}
+
+// PlanConfig holds plan-related configuration
+type PlanConfig struct {
+	Sync bool `mapstructure:"sync"` // Whether to sync plans to tracker by default
 }
 
 // GitConfig holds git-related configuration
@@ -137,6 +143,9 @@ func setDefaults() {
 	viper.SetDefault("review.default_reviewers", []string{"lead", "security"})
 	viper.SetDefault("review.optional_reviewers", []string{"performance", "accessibility"})
 
+	// Default plan settings
+	viper.SetDefault("plan.sync", true)
+
 	// Default git settings
 	viper.SetDefault("git.branch_pattern", "{issue_id}-{slug}")
 
@@ -152,6 +161,9 @@ func Get() *Config {
 			Default: DefaultConfig{
 				Tracker: "linear",
 				Runner:  "claude",
+			},
+			Plan: PlanConfig{
+				Sync: true,
 			},
 		}
 	}

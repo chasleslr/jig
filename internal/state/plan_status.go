@@ -12,6 +12,11 @@ type TrackerSyncer interface {
 	SyncPlanStatus(ctx context.Context, p *plan.Plan) error
 }
 
+// PlanSyncer defines the interface for syncing full plan content to a tracker
+type PlanSyncer interface {
+	SyncPlan(ctx context.Context, p *plan.Plan) error
+}
+
 // PlanStatusManager handles plan status transitions with automatic
 // synchronization to both local cache and remote tracker.
 // This ensures consistency between local and remote state.
@@ -90,4 +95,46 @@ func (m *PlanStatusManager) Complete(ctx context.Context, p *plan.Plan) (*Transi
 // This is a convenience method for the common operation of starting implementation.
 func (m *PlanStatusManager) StartProgress(ctx context.Context, p *plan.Plan) (*TransitionResult, error) {
 	return m.TransitionTo(ctx, p, plan.StatusInProgress)
+}
+
+// SyncResult contains the result of syncing a plan to the tracker
+type SyncResult struct {
+	IssueID      string // The issue ID (may be new if created)
+	IssueURL     string // URL to the issue in the tracker
+	Created      bool   // True if a new issue was created
+	Updated      bool   // True if an existing issue was updated
+	TrackerError error  // Any error that occurred during sync
+}
+
+// SyncPlanToTracker syncs the full plan content to a tracker.
+// This creates or updates the issue with the plan's problem statement and solution.
+// The plan's ID is updated if a new issue is created.
+func SyncPlanToTracker(ctx context.Context, p *plan.Plan, syncer PlanSyncer) (*SyncResult, error) {
+	if p == nil {
+		return nil, fmt.Errorf("plan is nil")
+	}
+	if syncer == nil {
+		return nil, fmt.Errorf("syncer is nil")
+	}
+
+	result := &SyncResult{}
+
+	// Check if this is a new issue or an update
+	existingID := p.ID
+
+	// Sync the plan to the tracker
+	if err := syncer.SyncPlan(ctx, p); err != nil {
+		result.TrackerError = err
+		return result, err
+	}
+
+	// Determine if it was created or updated
+	if existingID == "" || existingID != p.ID {
+		result.Created = true
+	} else {
+		result.Updated = true
+	}
+	result.IssueID = p.ID
+
+	return result, nil
 }

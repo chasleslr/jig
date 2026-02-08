@@ -63,15 +63,25 @@ var (
 var planSaveCmd = &cobra.Command{
 	Use:   "save [FILE]",
 	Short: "Save a plan from file or stdin",
-	Long: `Save an implementation plan to jig's cache.
+	Long: `Save an implementation plan to jig's cache and sync to issue tracker.
 
 If FILE is provided, reads the plan from that file.
 If no FILE is provided, reads from stdin.
 
+By default, the plan is synced to your configured issue tracker (e.g., Linear).
+This creates a new issue or updates an existing one with the plan content.
+Use --no-sync to skip syncing.
+
+The default sync behavior can be configured in ~/.jig/config.toml:
+
+  [plan]
+  sync = true  # or false to disable by default
+
 This command is typically invoked by Claude Code after creating a plan.
 
 Examples:
-  jig plan save plan.md
+  jig plan save plan.md              # Save and sync (default)
+  jig plan save --no-sync plan.md    # Save locally only
   cat plan.md | jig plan save
   jig plan save < plan.md
   jig plan save --session 12345 plan.md`,
@@ -105,12 +115,32 @@ Use --raw to output the raw markdown instead.`,
 }
 
 var planShowRaw bool
+var planSaveSync bool
+var planSaveNoSync bool
 
 var planListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List cached plans",
 	Long:  `List all plans in jig's cache.`,
 	RunE:  runPlanList,
+}
+
+var planSyncCmd = &cobra.Command{
+	Use:   "sync <PLAN_ID>",
+	Short: "Sync a plan to the issue tracker",
+	Long: `Sync a cached plan to your configured issue tracker.
+
+This creates or updates the corresponding issue in the tracker (e.g., Linear)
+with the plan's title, problem statement, and proposed solution.
+
+If the plan doesn't have an associated issue ID, a new issue will be created
+and the plan will be updated with the new ID.
+
+Examples:
+  jig plan sync PLAN-123
+  jig plan sync ENG-456`,
+	Args: cobra.ExactArgs(1),
+	RunE: runPlanSync,
 }
 
 func init() {
@@ -130,12 +160,19 @@ func init() {
 	planCmd.AddCommand(planImportCmd)
 	planCmd.AddCommand(planShowCmd)
 	planCmd.AddCommand(planListCmd)
+	planCmd.AddCommand(planSyncCmd)
 
 	planSaveCmd.Flags().StringVar(&planSaveSessionID, "session", "", "session ID for tracking the saved plan (used by jig plan)")
 	planShowCmd.Flags().BoolVar(&planShowRaw, "raw", false, "output raw markdown instead of interactive view")
+
+	planSaveCmd.Flags().BoolVar(&planSaveSync, "sync", false, "force sync plan to issue tracker (overrides config)")
+	planSaveCmd.Flags().BoolVar(&planSaveNoSync, "no-sync", false, "skip syncing to issue tracker (overrides config)")
 }
 
 func runPlanSave(cmd *cobra.Command, args []string) error {
+	ctx := context.Background()
+	cfg := config.Get()
+
 	var content []byte
 	var err error
 
@@ -189,9 +226,46 @@ func runPlanSave(cmd *cobra.Command, args []string) error {
 
 	printSuccess(fmt.Sprintf("Plan saved: %s", p.ID))
 	fmt.Printf("  Title: %s\n", p.Title)
+
+	// Determine if we should sync to tracker
+	// Priority: --no-sync flag > --sync flag > config default
+	shouldSync := cfg.Plan.Sync // Default from config
+	if planSaveSync {
+		shouldSync = true
+	}
+	if planSaveNoSync {
+		shouldSync = false
+	}
+
+	if shouldSync {
+		printInfo("Syncing plan to issue tracker...")
+		syncer, err := getPlanSyncer(cfg)
+		if err != nil {
+			printWarning(fmt.Sprintf("Could not sync to tracker: %v", err))
+		} else {
+			result, err := state.SyncPlanToTracker(ctx, p, syncer)
+			if err != nil {
+				printWarning(fmt.Sprintf("Failed to sync to tracker: %v", err))
+			} else {
+				// Update the cached plan with the new ID if it changed
+				if result.Created {
+					if err := state.DefaultCache.SavePlan(p); err != nil {
+						printWarning(fmt.Sprintf("Failed to update cached plan with new ID: %v", err))
+					}
+					printSuccess(fmt.Sprintf("Created issue: %s", result.IssueID))
+				} else if result.Updated {
+					printSuccess(fmt.Sprintf("Updated issue: %s", result.IssueID))
+				}
+			}
+		}
+	}
+
 	fmt.Printf("\nNext steps:\n")
 	fmt.Printf("  - View plan: jig plan show %s\n", p.ID)
 	fmt.Printf("  - Start implementation: jig implement %s\n", p.ID)
+	if !shouldSync {
+		fmt.Printf("  - Sync to tracker: jig plan sync %s\n", p.ID)
+	}
 
 	return nil
 }
@@ -273,6 +347,55 @@ func runPlanShow(cmd *cobra.Command, args []string) error {
 
 	// Show interactive plan view
 	return ui.ShowPlan(p)
+}
+
+func runPlanSync(cmd *cobra.Command, args []string) error {
+	ctx := context.Background()
+	cfg := config.Get()
+	planID := args[0]
+
+	// Initialize cache
+	if err := state.Init(); err != nil {
+		return fmt.Errorf("failed to initialize cache: %w", err)
+	}
+
+	// Get the plan from cache
+	p, err := state.DefaultCache.GetPlan(planID)
+	if err != nil {
+		return fmt.Errorf("failed to read plan: %w", err)
+	}
+	if p == nil {
+		return fmt.Errorf("plan not found: %s", planID)
+	}
+
+	printInfo(fmt.Sprintf("Syncing plan '%s' to issue tracker...", p.Title))
+
+	// Get the syncer
+	syncer, err := getPlanSyncer(cfg)
+	if err != nil {
+		return fmt.Errorf("could not connect to tracker: %w", err)
+	}
+
+	// Sync the plan
+	result, err := state.SyncPlanToTracker(ctx, p, syncer)
+	if err != nil {
+		return fmt.Errorf("failed to sync plan: %w", err)
+	}
+
+	// Update the cached plan if the ID changed (new issue created)
+	if result.Created {
+		if err := state.DefaultCache.SavePlan(p); err != nil {
+			printWarning(fmt.Sprintf("Failed to update cached plan with new ID: %v", err))
+		}
+		printSuccess(fmt.Sprintf("Created issue: %s", result.IssueID))
+	} else if result.Updated {
+		printSuccess(fmt.Sprintf("Updated issue: %s", result.IssueID))
+	}
+
+	fmt.Printf("\nPlan synced successfully.\n")
+	fmt.Printf("  Issue ID: %s\n", result.IssueID)
+
+	return nil
 }
 
 func runPlanList(cmd *cobra.Command, args []string) error {
@@ -511,6 +634,30 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 
 // getTracker returns the configured tracker client
 func getTracker(cfg *config.Config) (tracker.Tracker, error) {
+	switch cfg.Default.Tracker {
+	case "linear":
+		store, err := config.NewStore()
+		if err != nil {
+			return nil, err
+		}
+		apiKey, err := store.GetLinearAPIKey()
+		if err != nil {
+			return nil, err
+		}
+		if apiKey == "" {
+			apiKey = cfg.Linear.APIKey
+		}
+		if apiKey == "" {
+			return nil, fmt.Errorf("Linear API key not configured")
+		}
+		return linear.NewClient(apiKey, cfg.Linear.TeamID, cfg.Linear.DefaultProject), nil
+	default:
+		return nil, fmt.Errorf("unknown tracker: %s", cfg.Default.Tracker)
+	}
+}
+
+// getPlanSyncer returns a PlanSyncer for the configured tracker
+func getPlanSyncer(cfg *config.Config) (state.PlanSyncer, error) {
 	switch cfg.Default.Tracker {
 	case "linear":
 		store, err := config.NewStore()

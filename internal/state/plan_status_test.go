@@ -23,6 +23,26 @@ func (m *mockSyncer) SyncPlanStatus(ctx context.Context, p *plan.Plan) error {
 	return m.syncErr
 }
 
+// mockPlanSyncer is a mock PlanSyncer for testing
+type mockPlanSyncer struct {
+	syncCalled  bool
+	syncErr     error
+	lastPlan    *plan.Plan
+	assignNewID string // if set, assigns this ID to the plan
+}
+
+func (m *mockPlanSyncer) SyncPlan(ctx context.Context, p *plan.Plan) error {
+	m.syncCalled = true
+	m.lastPlan = p
+	if m.syncErr != nil {
+		return m.syncErr
+	}
+	if m.assignNewID != "" && p.ID == "" {
+		p.ID = m.assignNewID
+	}
+	return nil
+}
+
 func createTestCache(t *testing.T) (*Cache, func()) {
 	t.Helper()
 	tmpDir, err := os.MkdirTemp("", "jig-plan-status-test")
@@ -310,5 +330,112 @@ func TestPlanStatusManager_TransitionTo_CacheError(t *testing.T) {
 	// Result should indicate cache was not saved
 	if result.CacheSaved {
 		t.Error("CacheSaved should be false when cache save fails")
+	}
+}
+
+func TestSyncPlanToTracker_CreateNewIssue(t *testing.T) {
+	syncer := &mockPlanSyncer{assignNewID: "ENG-123"}
+	p := &plan.Plan{
+		Title:            "Test Plan",
+		ProblemStatement: "The problem",
+		ProposedSolution: "The solution",
+		Status:           plan.StatusDraft,
+		Author:           "testuser",
+	}
+
+	result, err := SyncPlanToTracker(context.Background(), p, syncer)
+	if err != nil {
+		t.Fatalf("SyncPlanToTracker() error = %v", err)
+	}
+
+	if !syncer.syncCalled {
+		t.Error("syncer.SyncPlan should have been called")
+	}
+	if syncer.lastPlan != p {
+		t.Error("syncer should have received the plan")
+	}
+	if !result.Created {
+		t.Error("result.Created should be true for new issue")
+	}
+	if result.Updated {
+		t.Error("result.Updated should be false for new issue")
+	}
+	if result.IssueID != "ENG-123" {
+		t.Errorf("result.IssueID = %q, want %q", result.IssueID, "ENG-123")
+	}
+	if p.ID != "ENG-123" {
+		t.Errorf("plan.ID should be updated to %q, got %q", "ENG-123", p.ID)
+	}
+}
+
+func TestSyncPlanToTracker_UpdateExistingIssue(t *testing.T) {
+	syncer := &mockPlanSyncer{}
+	p := &plan.Plan{
+		ID:               "ENG-456",
+		Title:            "Test Plan",
+		ProblemStatement: "The problem",
+		ProposedSolution: "The solution",
+		Status:           plan.StatusDraft,
+		Author:           "testuser",
+	}
+
+	result, err := SyncPlanToTracker(context.Background(), p, syncer)
+	if err != nil {
+		t.Fatalf("SyncPlanToTracker() error = %v", err)
+	}
+
+	if !result.Updated {
+		t.Error("result.Updated should be true for existing issue")
+	}
+	if result.Created {
+		t.Error("result.Created should be false for existing issue")
+	}
+	if result.IssueID != "ENG-456" {
+		t.Errorf("result.IssueID = %q, want %q", result.IssueID, "ENG-456")
+	}
+}
+
+func TestSyncPlanToTracker_SyncError(t *testing.T) {
+	syncErr := errors.New("sync failed")
+	syncer := &mockPlanSyncer{syncErr: syncErr}
+	p := &plan.Plan{
+		ID:     "ENG-789",
+		Title:  "Test Plan",
+		Status: plan.StatusDraft,
+		Author: "testuser",
+	}
+
+	result, err := SyncPlanToTracker(context.Background(), p, syncer)
+	if err == nil {
+		t.Error("SyncPlanToTracker() should return error when sync fails")
+	}
+	if err != syncErr {
+		t.Errorf("error = %v, want %v", err, syncErr)
+	}
+	if result.TrackerError != syncErr {
+		t.Errorf("result.TrackerError = %v, want %v", result.TrackerError, syncErr)
+	}
+}
+
+func TestSyncPlanToTracker_NilPlan(t *testing.T) {
+	syncer := &mockPlanSyncer{}
+
+	_, err := SyncPlanToTracker(context.Background(), nil, syncer)
+	if err == nil {
+		t.Error("SyncPlanToTracker() should return error for nil plan")
+	}
+}
+
+func TestSyncPlanToTracker_NilSyncer(t *testing.T) {
+	p := &plan.Plan{
+		ID:     "ENG-123",
+		Title:  "Test Plan",
+		Status: plan.StatusDraft,
+		Author: "testuser",
+	}
+
+	_, err := SyncPlanToTracker(context.Background(), p, nil)
+	if err == nil {
+		t.Error("SyncPlanToTracker() should return error for nil syncer")
 	}
 }
