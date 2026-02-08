@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charleslr/jig/internal/config"
+	"github.com/charleslr/jig/internal/plan"
 	"github.com/charleslr/jig/internal/tracker"
 )
 
@@ -1116,6 +1118,59 @@ Test phase.
 	if savedPlanID != "" {
 		t.Errorf("expected empty saved plan ID for nonexistent session, got '%s'", savedPlanID)
 	}
+}
+
+func TestShouldSyncToLinear(t *testing.T) {
+	t.Run("returns false when tracker is not linear", func(t *testing.T) {
+		cfg := &config.Config{
+			Default: config.DefaultConfig{
+				Tracker: "github",
+			},
+		}
+		p := &plan.Plan{IssueID: "NUM-41"}
+
+		result := shouldSyncToLinear(cfg, p)
+		if result {
+			t.Error("expected false when tracker is not linear")
+		}
+	})
+
+	t.Run("returns false when sync is disabled", func(t *testing.T) {
+		syncDisabled := false
+		cfg := &config.Config{
+			Default: config.DefaultConfig{
+				Tracker: "linear",
+			},
+			Linear: config.LinearConfig{
+				SyncPlanOnSave: &syncDisabled,
+			},
+		}
+		p := &plan.Plan{IssueID: "NUM-41"}
+
+		result := shouldSyncToLinear(cfg, p)
+		if result {
+			t.Error("expected false when sync is disabled")
+		}
+	})
+
+	t.Run("returns false when plan has no linked issue", func(t *testing.T) {
+		cfg := &config.Config{
+			Default: config.DefaultConfig{
+				Tracker: "linear",
+			},
+			Linear: config.LinearConfig{},
+		}
+		p := &plan.Plan{IssueID: ""} // No linked issue
+
+		result := shouldSyncToLinear(cfg, p)
+		if result {
+			t.Error("expected false when plan has no linked issue")
+		}
+	})
+
+	// Note: Testing "no API key configured" is skipped because it depends on
+	// the system's ~/.jig/.credentials file which may have real credentials.
+	// The API key check path is tested indirectly through integration tests.
 }
 
 func TestPlanSaveCmd_NoSyncFlag(t *testing.T) {

@@ -1,6 +1,10 @@
 package linear
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -289,8 +293,6 @@ Test approach.
 }
 
 func TestGetIssueLabelIDs(t *testing.T) {
-	// This function is tested indirectly through SyncPlanToIssue tests
-	// but we can add a direct test for edge cases
 	t.Run("returns empty slice on error", func(t *testing.T) {
 		// Test with invalid context/client that will fail
 		// The function handles errors gracefully and returns nil
@@ -298,6 +300,222 @@ func TestGetIssueLabelIDs(t *testing.T) {
 		result := getIssueLabelIDs(nil, client, "invalid-id")
 		if result != nil {
 			t.Errorf("expected nil on error, got %v", result)
+		}
+	})
+
+	t.Run("returns label IDs from issue", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			response := GraphQLResponse{
+				Data: json.RawMessage(`{
+					"issue": {
+						"labels": {
+							"nodes": [
+								{"id": "label-1"},
+								{"id": "label-2"},
+								{"id": "label-3"}
+							]
+						}
+					}
+				}`),
+			}
+			json.NewEncoder(w).Encode(response)
+		}))
+		defer server.Close()
+
+		client := newTestClient(server.URL)
+		result := getIssueLabelIDs(context.Background(), client, "issue-123")
+
+		if len(result) != 3 {
+			t.Errorf("expected 3 label IDs, got %d", len(result))
+		}
+		if result[0] != "label-1" || result[1] != "label-2" || result[2] != "label-3" {
+			t.Errorf("unexpected label IDs: %v", result)
+		}
+	})
+
+	t.Run("returns empty slice for issue with no labels", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			response := GraphQLResponse{
+				Data: json.RawMessage(`{
+					"issue": {
+						"labels": {
+							"nodes": []
+						}
+					}
+				}`),
+			}
+			json.NewEncoder(w).Encode(response)
+		}))
+		defer server.Close()
+
+		client := newTestClient(server.URL)
+		result := getIssueLabelIDs(context.Background(), client, "issue-123")
+
+		if len(result) != 0 {
+			t.Errorf("expected 0 label IDs, got %d", len(result))
+		}
+	})
+}
+
+func TestSyncPlanToIssue(t *testing.T) {
+	t.Run("returns error when plan has no linked issue", func(t *testing.T) {
+		client := NewClient("test-key", "team-id", "")
+		p := &plan.Plan{
+			ID:      "PLAN-123",
+			IssueID: "", // No linked issue
+		}
+
+		err := client.SyncPlanToIssue(context.Background(), p, "jig-plan")
+		if err == nil {
+			t.Error("expected error when plan has no linked issue")
+		}
+		if !strings.Contains(err.Error(), "no linked issue") {
+			t.Errorf("expected 'no linked issue' error, got: %v", err)
+		}
+	})
+
+	t.Run("syncs plan to issue successfully", func(t *testing.T) {
+		callCount := 0
+		var capturedCommentBody string
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var req GraphQLRequest
+			json.NewDecoder(r.Body).Decode(&req)
+			callCount++
+
+			// Determine which query is being made based on call order
+			switch callCount {
+			case 1:
+				// GetIssue query
+				response := GraphQLResponse{
+					Data: json.RawMessage(`{
+						"issues": {
+							"nodes": [{
+								"id": "internal-issue-id",
+								"identifier": "NUM-41",
+								"title": "Test Issue",
+								"team": {"id": "team-123"},
+								"state": {"id": "state-1", "name": "Todo", "type": "unstarted"}
+							}]
+						}
+					}`),
+				}
+				json.NewEncoder(w).Encode(response)
+			case 2:
+				// AddComment mutation
+				if input, ok := req.Variables["input"].(map[string]interface{}); ok {
+					if body, ok := input["body"].(string); ok {
+						capturedCommentBody = body
+					}
+				}
+				response := GraphQLResponse{
+					Data: json.RawMessage(`{
+						"commentCreate": {
+							"success": true,
+							"comment": {
+								"id": "comment-123",
+								"body": "test"
+							}
+						}
+					}`),
+				}
+				json.NewEncoder(w).Encode(response)
+			case 3:
+				// GetTeamLabels query
+				response := GraphQLResponse{
+					Data: json.RawMessage(`{
+						"team": {
+							"labels": {
+								"nodes": [
+									{"id": "existing-label", "name": "bug"},
+									{"id": "jig-plan-label", "name": "jig-plan"}
+								]
+							}
+						}
+					}`),
+				}
+				json.NewEncoder(w).Encode(response)
+			case 4:
+				// GetIssueLabels query
+				response := GraphQLResponse{
+					Data: json.RawMessage(`{
+						"issue": {
+							"labels": {
+								"nodes": [
+									{"id": "existing-label"}
+								]
+							}
+						}
+					}`),
+				}
+				json.NewEncoder(w).Encode(response)
+			case 5:
+				// AddLabelToIssue mutation
+				response := GraphQLResponse{
+					Data: json.RawMessage(`{
+						"issueUpdate": {
+							"success": true
+						}
+					}`),
+				}
+				json.NewEncoder(w).Encode(response)
+			}
+		}))
+		defer server.Close()
+
+		client := newTestClient(server.URL)
+		p := &plan.Plan{
+			ID:               "PLAN-123",
+			IssueID:          "NUM-41",
+			Title:            "Test Plan",
+			ProblemStatement: "Test problem",
+			ProposedSolution: "Test solution",
+		}
+
+		err := client.SyncPlanToIssue(context.Background(), p, "jig-plan")
+		if err != nil {
+			t.Fatalf("SyncPlanToIssue failed: %v", err)
+		}
+
+		// Verify comment was created with plan content
+		if !strings.Contains(capturedCommentBody, "Implementation Plan") {
+			t.Error("expected comment to contain 'Implementation Plan'")
+		}
+		if !strings.Contains(capturedCommentBody, "Test problem") {
+			t.Error("expected comment to contain problem statement")
+		}
+
+		// Verify all expected calls were made
+		if callCount != 5 {
+			t.Errorf("expected 5 API calls, got %d", callCount)
+		}
+	})
+
+	t.Run("returns error when issue not found", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			response := GraphQLResponse{
+				Data: json.RawMessage(`{
+					"issues": {
+						"nodes": []
+					}
+				}`),
+			}
+			json.NewEncoder(w).Encode(response)
+		}))
+		defer server.Close()
+
+		client := newTestClient(server.URL)
+		p := &plan.Plan{
+			ID:      "PLAN-123",
+			IssueID: "NONEXISTENT-999",
+		}
+
+		err := client.SyncPlanToIssue(context.Background(), p, "jig-plan")
+		if err == nil {
+			t.Error("expected error when issue not found")
+		}
+		if !strings.Contains(err.Error(), "failed to get issue") {
+			t.Errorf("expected 'failed to get issue' error, got: %v", err)
 		}
 	})
 }
