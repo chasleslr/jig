@@ -203,3 +203,79 @@ func TestMarkPlanSaved(t *testing.T) {
 		t.Error("expected plan-saved.marker file to be created")
 	}
 }
+
+func TestWriteAndReadSavedPlanID(t *testing.T) {
+	// Create a temp directory for testing
+	tempDir, err := os.MkdirTemp("", "jig-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Change to temp directory
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current dir: %v", err)
+	}
+	defer os.Chdir(originalDir)
+
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("failed to change to temp dir: %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		sessionID string
+		planID    string
+	}{
+		{
+			name:      "simple session and plan IDs",
+			sessionID: "12345",
+			planID:    "NUM-22",
+		},
+		{
+			name:      "complex plan ID",
+			sessionID: "1738977123456789",
+			planID:    "my-complex-plan-id-123",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Write the plan ID
+			writeSavedPlanID(tt.sessionID, tt.planID)
+
+			// Read it back
+			got := readSavedPlanID(tt.sessionID)
+			if got != tt.planID {
+				t.Errorf("readSavedPlanID() = %q, want %q", got, tt.planID)
+			}
+		})
+	}
+}
+
+func TestReadSavedPlanID_NotFound(t *testing.T) {
+	// Create a temp directory for testing
+	tempDir, err := os.MkdirTemp("", "jig-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Change to temp directory
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current dir: %v", err)
+	}
+	defer os.Chdir(originalDir)
+
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("failed to change to temp dir: %v", err)
+	}
+
+	// Try to read a non-existent session
+	got := readSavedPlanID("nonexistent-session")
+	if got != "" {
+		t.Errorf("readSavedPlanID() for nonexistent session = %q, want empty string", got)
+	}
+}

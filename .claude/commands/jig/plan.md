@@ -128,9 +128,9 @@ When the plan is complete and the user is satisfied:
    EOF
    ```
 
-2. **Save to jig's cache**:
+2. **Save to jig's cache** (include the session ID so jig can track which plan was saved):
    ```bash
-   jig plan save plan.md
+   jig plan save --session $ARGUMENTS plan.md
    ```
 
 This will validate and cache the plan for implementation with `jig implement <plan-id>`.
@@ -164,7 +164,7 @@ This will validate and cache the plan for implementation with `jig implement <pl
 - **Questions**: Ask clarifying questions before diving into planning
 - **Progress**: Share your thinking as you design the solution
 - **Draft**: Present the draft plan for review
-- **End**: Save the finalized plan with `jig plan save`
+- **End**: Save the finalized plan with `jig plan save --session $ARGUMENTS`
 
 ---
 
@@ -174,4 +174,4 @@ This will validate and cache the plan for implementation with `jig implement <pl
 2. **Explore the codebase**: Don't plan in a vacuum - understand existing patterns
 3. **Get user buy-in**: Present drafts and iterate based on feedback
 4. **Keep it actionable**: Every part of the plan should be clearly implementable
-5. **Save properly**: Always use `jig plan save` to cache the final plan
+5. **Save properly**: Always use `jig plan save --session $ARGUMENTS` to cache the final plan
