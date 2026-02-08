@@ -109,8 +109,8 @@ func runHookExitPlanMode(cmd *cobra.Command, args []string) error {
 	if _, err := os.Stat(markerPath); err == nil {
 		// Plan already saved, allow exit and clean up marker
 		os.Remove(markerPath)
-		fmt.Println("Plan has been saved. You may now exit plan mode.")
-		return nil // exit 0 = allow
+		outputHookResponse("allow", "Plan has been saved. You may now exit plan mode.")
+		return nil
 	}
 
 	// Check for "skip save" marker (user chose not to save)
@@ -118,7 +118,8 @@ func runHookExitPlanMode(cmd *cobra.Command, args []string) error {
 	if _, err := os.Stat(skipMarkerPath); err == nil {
 		// User chose to skip, allow exit and clean up marker
 		os.Remove(skipMarkerPath)
-		return nil // exit 0 = allow
+		outputHookResponse("allow", "")
+		return nil
 	}
 
 	// Find plan file - first check ~/.claude/plans/ for recently modified plans
@@ -130,12 +131,12 @@ func runHookExitPlanMode(cmd *cobra.Command, args []string) error {
 
 	if planFile == "" {
 		// No plan file found, allow exit
-		return nil // exit 0 = allow
+		outputHookResponse("allow", "")
+		return nil
 	}
 
-	// Plan exists but not saved - block and prompt user
-	fmt.Fprint(os.Stderr, buildExitPlanModePrompt(planFile, sessionID))
-	os.Exit(2) // exit 2 = block
+	// Plan exists but not saved - deny and prompt user to save or discard
+	outputHookResponse("deny", buildExitPlanModePrompt(planFile, sessionID))
 	return nil
 }
 
@@ -251,6 +252,43 @@ func createSessionMarker(sessionID, name string) error {
 	return os.WriteFile(path, []byte{}, 0644)
 }
 
+// HookOutput represents the JSON output for Claude Code hooks
+// When permissionDecision is set, it overrides Claude's default permission behavior
+type HookOutput struct {
+	// PermissionDecision controls whether the tool is allowed to run
+	// Values: "allow", "deny"
+	PermissionDecision string `json:"permissionDecision,omitempty"`
+
+	// PermissionDecisionReason is shown to Claude to explain the decision
+	// Claude can use this to inform the user or take action
+	PermissionDecisionReason string `json:"permissionDecisionReason,omitempty"`
+}
+
+// outputHookResponse outputs a JSON hook response to stdout
+func outputHookResponse(decision, reason string) {
+	output := HookOutput{
+		PermissionDecision:       decision,
+		PermissionDecisionReason: reason,
+	}
+	data, _ := json.Marshal(output)
+	fmt.Println(string(data))
+}
+
+// readPlanSummary reads the plan file and returns a brief summary
+func readPlanSummary(planFile string) string {
+	content, err := os.ReadFile(planFile)
+	if err != nil {
+		return ""
+	}
+
+	// Return first 500 chars as summary, or full content if shorter
+	text := string(content)
+	if len(text) > 500 {
+		return text[:500] + "..."
+	}
+	return text
+}
+
 // buildExitPlanModePrompt builds the prompt for Claude to show the user
 func buildExitPlanModePrompt(planFile, sessionID string) string {
 	// Build the marker command with session ID if available
@@ -259,8 +297,22 @@ func buildExitPlanModePrompt(planFile, sessionID string) string {
 		markSkipCmd = fmt.Sprintf("jig hook mark-skip-save --session %s", sessionID)
 	}
 
-	return fmt.Sprintf(`BLOCKED: Before exiting plan mode, ask the user what they want to do with their plan.
+	// Read plan summary for context
+	planSummary := readPlanSummary(planFile)
+	planContext := ""
+	if planSummary != "" {
+		planContext = fmt.Sprintf(`
+Plan file: %s
+Plan preview:
+---
+%s
+---
 
+`, planFile, planSummary)
+	}
+
+	return fmt.Sprintf(`Before exiting plan mode, ask the user what they want to do with their plan.
+%s
 Use the AskUserQuestion tool with these options:
 
 question: "What would you like to do with your plan?"
@@ -280,5 +332,5 @@ Based on the user's choice:
 - If "Exit without saving":
   1. Run: %s
   2. Call ExitPlanMode again
-`, planFile, markSkipCmd)
+`, planContext, planFile, markSkipCmd)
 }

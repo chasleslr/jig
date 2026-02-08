@@ -223,3 +223,94 @@ func containsHelper(s, substr string) bool {
 	}
 	return false
 }
+
+func TestHookOutput(t *testing.T) {
+	t.Run("JSON marshaling", func(t *testing.T) {
+		output := HookOutput{
+			PermissionDecision:       "deny",
+			PermissionDecisionReason: "Test reason",
+		}
+
+		data, err := json.Marshal(output)
+		if err != nil {
+			t.Fatalf("failed to marshal HookOutput: %v", err)
+		}
+
+		// Verify it contains expected fields
+		jsonStr := string(data)
+		if !contains(jsonStr, `"permissionDecision":"deny"`) {
+			t.Errorf("JSON should contain permissionDecision field, got: %s", jsonStr)
+		}
+		if !contains(jsonStr, `"permissionDecisionReason":"Test reason"`) {
+			t.Errorf("JSON should contain permissionDecisionReason field, got: %s", jsonStr)
+		}
+	})
+
+	t.Run("omitempty for empty fields", func(t *testing.T) {
+		output := HookOutput{
+			PermissionDecision: "allow",
+		}
+
+		data, err := json.Marshal(output)
+		if err != nil {
+			t.Fatalf("failed to marshal HookOutput: %v", err)
+		}
+
+		jsonStr := string(data)
+		if contains(jsonStr, "permissionDecisionReason") {
+			t.Errorf("JSON should omit empty permissionDecisionReason, got: %s", jsonStr)
+		}
+	})
+}
+
+func TestReadPlanSummary(t *testing.T) {
+	// Create a temporary directory
+	tmpDir, err := os.MkdirTemp("", "jig-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	t.Run("short plan file", func(t *testing.T) {
+		planContent := "# My Plan\n\nThis is a short plan."
+		planFile := filepath.Join(tmpDir, "short-plan.md")
+		err := os.WriteFile(planFile, []byte(planContent), 0644)
+		if err != nil {
+			t.Fatalf("failed to write plan file: %v", err)
+		}
+
+		summary := readPlanSummary(planFile)
+		if summary != planContent {
+			t.Errorf("expected full content for short plan, got: %s", summary)
+		}
+	})
+
+	t.Run("long plan file truncated", func(t *testing.T) {
+		// Create content longer than 500 chars
+		planContent := "# My Plan\n\n"
+		for i := 0; i < 100; i++ {
+			planContent += "This is line number " + string(rune('0'+i%10)) + " of the plan content.\n"
+		}
+
+		planFile := filepath.Join(tmpDir, "long-plan.md")
+		err := os.WriteFile(planFile, []byte(planContent), 0644)
+		if err != nil {
+			t.Fatalf("failed to write plan file: %v", err)
+		}
+
+		summary := readPlanSummary(planFile)
+		if len(summary) > 510 { // 500 + "..."
+			t.Errorf("expected truncated summary, got length: %d", len(summary))
+		}
+		if !contains(summary, "...") {
+			t.Error("truncated summary should end with ...")
+		}
+	})
+
+	t.Run("non-existent file", func(t *testing.T) {
+		summary := readPlanSummary("/nonexistent/path/plan.md")
+		if summary != "" {
+			t.Errorf("expected empty string for non-existent file, got: %s", summary)
+		}
+	})
+}
