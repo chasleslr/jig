@@ -240,14 +240,23 @@ func IsInsidePath(targetPath string) (bool, error) {
 		return false, err
 	}
 
-	absCwd, err := filepath.Abs(cwd)
+	// Resolve symlinks to handle cases like /tmp -> /private/tmp on macOS
+	absCwd, err := filepath.EvalSymlinks(cwd)
 	if err != nil {
-		return false, err
+		// Fall back to Abs if EvalSymlinks fails (e.g., path doesn't exist)
+		absCwd, err = filepath.Abs(cwd)
+		if err != nil {
+			return false, err
+		}
 	}
 
-	absTarget, err := filepath.Abs(targetPath)
+	absTarget, err := filepath.EvalSymlinks(targetPath)
 	if err != nil {
-		return false, err
+		// Fall back to Abs if EvalSymlinks fails
+		absTarget, err = filepath.Abs(targetPath)
+		if err != nil {
+			return false, err
+		}
 	}
 
 	// Check if cwd is the same as target or a subdirectory of target
