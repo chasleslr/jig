@@ -1,11 +1,14 @@
 package state
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/charleslr/jig/internal/git"
+	gitmock "github.com/charleslr/jig/internal/git/mock"
 	"github.com/charleslr/jig/internal/plan"
 )
 
@@ -843,5 +846,327 @@ func TestSyncPRForIssueGetMetadataError(t *testing.T) {
 	_, err = cache.SyncPRForIssue("BAD-1")
 	if err == nil {
 		t.Error("SyncPRForIssue() should error on invalid JSON")
+	}
+}
+
+// Tests for SyncPRForIssueWithClient using mock git client
+
+func TestSyncPRForIssueWithClientFindsPR(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Create metadata with branch but no PR
+	meta := &IssueMetadata{
+		IssueID:    "TEST-123",
+		BranchName: "feature-branch",
+	}
+	if err := cache.SaveIssueMetadata(meta); err != nil {
+		t.Fatalf("SaveIssueMetadata() error = %v", err)
+	}
+
+	// Set up mock client with a PR for that branch
+	mockClient := gitmock.NewClient()
+	mockClient.AddPR(&git.PR{
+		Number:      42,
+		Title:       "Test PR",
+		URL:         "https://github.com/test/repo/pull/42",
+		HeadRefName: "feature-branch",
+	})
+
+	// Sync should find the PR
+	prNumber, err := cache.SyncPRForIssueWithClient("TEST-123", mockClient)
+	if err != nil {
+		t.Fatalf("SyncPRForIssueWithClient() error = %v", err)
+	}
+	if prNumber != 42 {
+		t.Errorf("SyncPRForIssueWithClient() = %d, want 42", prNumber)
+	}
+
+	// Verify metadata was updated
+	updated, _ := cache.GetIssueMetadata("TEST-123")
+	if updated.PRNumber != 42 {
+		t.Errorf("PRNumber = %d, want 42", updated.PRNumber)
+	}
+	if updated.PRURL != "https://github.com/test/repo/pull/42" {
+		t.Errorf("PRURL = %q, want %q", updated.PRURL, "https://github.com/test/repo/pull/42")
+	}
+}
+
+func TestSyncPRForIssueWithClientNoPRFound(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Create metadata with branch but no PR
+	meta := &IssueMetadata{
+		IssueID:    "TEST-456",
+		BranchName: "orphan-branch",
+	}
+	if err := cache.SaveIssueMetadata(meta); err != nil {
+		t.Fatalf("SaveIssueMetadata() error = %v", err)
+	}
+
+	// Mock client has no PRs
+	mockClient := gitmock.NewClient()
+
+	// Sync should return 0 (no PR found)
+	prNumber, err := cache.SyncPRForIssueWithClient("TEST-456", mockClient)
+	if err != nil {
+		t.Fatalf("SyncPRForIssueWithClient() error = %v", err)
+	}
+	if prNumber != 0 {
+		t.Errorf("SyncPRForIssueWithClient() = %d, want 0", prNumber)
+	}
+}
+
+func TestSyncPRForIssueWithClientAPIError(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Create metadata with branch
+	meta := &IssueMetadata{
+		IssueID:    "TEST-789",
+		BranchName: "error-branch",
+	}
+	if err := cache.SaveIssueMetadata(meta); err != nil {
+		t.Fatalf("SaveIssueMetadata() error = %v", err)
+	}
+
+	// Mock client returns error
+	mockClient := gitmock.NewClient()
+	mockClient.GetPRForBranchError = fmt.Errorf("GitHub API error")
+
+	// Sync should return the error
+	_, err = cache.SyncPRForIssueWithClient("TEST-789", mockClient)
+	if err == nil {
+		t.Error("SyncPRForIssueWithClient() should error when API fails")
+	}
+}
+
+func TestSyncPRForIssueWithClientAlreadyHasPR(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Create metadata with existing PR
+	meta := &IssueMetadata{
+		IssueID:    "TEST-EXISTING",
+		BranchName: "existing-branch",
+		PRNumber:   99,
+		PRURL:      "https://github.com/test/repo/pull/99",
+	}
+	if err := cache.SaveIssueMetadata(meta); err != nil {
+		t.Fatalf("SaveIssueMetadata() error = %v", err)
+	}
+
+	// Mock client - should not be called since PR already exists
+	mockClient := gitmock.NewClient()
+
+	// Sync should return existing PR number without calling API
+	prNumber, err := cache.SyncPRForIssueWithClient("TEST-EXISTING", mockClient)
+	if err != nil {
+		t.Fatalf("SyncPRForIssueWithClient() error = %v", err)
+	}
+	if prNumber != 99 {
+		t.Errorf("SyncPRForIssueWithClient() = %d, want 99", prNumber)
+	}
+}
+
+func TestSyncPRForIssueWithClientNoMetadata(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+	mockClient := gitmock.NewClient()
+
+	// No metadata saved - should error
+	_, err = cache.SyncPRForIssueWithClient("NONEXISTENT", mockClient)
+	if err == nil {
+		t.Error("SyncPRForIssueWithClient() should error when no metadata exists")
+	}
+	if !strings.Contains(err.Error(), "no metadata found") {
+		t.Errorf("error should mention 'no metadata found', got: %v", err)
+	}
+}
+
+func TestSyncPRForIssueWithClientNoBranch(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Create metadata without branch
+	meta := &IssueMetadata{
+		IssueID:    "NO-BRANCH",
+		BranchName: "",
+	}
+	if err := cache.SaveIssueMetadata(meta); err != nil {
+		t.Fatalf("SaveIssueMetadata() error = %v", err)
+	}
+
+	mockClient := gitmock.NewClient()
+
+	// Should error - no branch name
+	_, err = cache.SyncPRForIssueWithClient("NO-BRANCH", mockClient)
+	if err == nil {
+		t.Error("SyncPRForIssueWithClient() should error when no branch name")
+	}
+	if !strings.Contains(err.Error(), "no branch name") {
+		t.Errorf("error should mention 'no branch name', got: %v", err)
+	}
+}
+
+// Tests for idempotent Init()
+
+func TestInitIdempotent(t *testing.T) {
+	// Save original DefaultCache
+	originalCache := DefaultCache
+
+	// Create a test cache
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	testCache := NewCacheWithDir(tmpDir)
+	DefaultCache = testCache
+
+	// Call Init() - should be a no-op since DefaultCache is already set
+	err = Init()
+	if err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	// DefaultCache should still be the test cache, not replaced
+	if DefaultCache != testCache {
+		t.Error("Init() should not replace DefaultCache when already set")
+	}
+
+	// Restore original
+	DefaultCache = originalCache
+}
+
+func TestInitWhenNil(t *testing.T) {
+	// Save original DefaultCache
+	originalCache := DefaultCache
+	defer func() { DefaultCache = originalCache }()
+
+	// Set DefaultCache to nil
+	DefaultCache = nil
+
+	// Call Init() - should create a new cache
+	// Note: This will use the real config.CacheDir() so we can't fully test the path
+	// but we can verify it doesn't panic and sets DefaultCache
+	err := Init()
+	if err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	if DefaultCache == nil {
+		t.Error("Init() should set DefaultCache when it was nil")
+	}
+}
+
+func TestSyncPRForIssueDelegatesToWithClient(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Create metadata with existing PR (so we don't need real gh CLI)
+	meta := &IssueMetadata{
+		IssueID:    "DELEGATE-TEST",
+		BranchName: "delegate-branch",
+		PRNumber:   77,
+		PRURL:      "https://github.com/test/repo/pull/77",
+	}
+	if err := cache.SaveIssueMetadata(meta); err != nil {
+		t.Fatalf("SaveIssueMetadata() error = %v", err)
+	}
+
+	// SyncPRForIssue uses git.DefaultClient, but since we have an existing PR
+	// it won't actually call the client
+	prNumber, err := cache.SyncPRForIssue("DELEGATE-TEST")
+	if err != nil {
+		t.Fatalf("SyncPRForIssue() error = %v", err)
+	}
+	if prNumber != 77 {
+		t.Errorf("SyncPRForIssue() = %d, want 77", prNumber)
 	}
 }
