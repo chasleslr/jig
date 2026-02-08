@@ -173,3 +173,24 @@ func TestCanBeImplemented(t *testing.T) {
 	}
 }
 
+func TestHasLinkedIssue(t *testing.T) {
+	tests := []struct {
+		name    string
+		issueID string
+		want    bool
+	}{
+		{"empty issue ID", "", false},
+		{"with Linear issue ID", "NUM-41", true},
+		{"with other issue ID", "ENG-123", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &Plan{IssueID: tt.issueID}
+			if got := p.HasLinkedIssue(); got != tt.want {
+				t.Errorf("HasLinkedIssue() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+

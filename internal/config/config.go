@@ -30,6 +30,8 @@ type LinearConfig struct {
 	APIKey         string `mapstructure:"api_key"`
 	TeamID         string `mapstructure:"team_id"`
 	DefaultProject string `mapstructure:"default_project"`
+	SyncPlanOnSave *bool  `mapstructure:"sync_plan_on_save"` // default: true
+	PlanLabelName  string `mapstructure:"plan_label_name"`   // default: "jig-plan"
 }
 
 // GitHubConfig holds GitHub configuration (uses gh CLI auth)
@@ -140,6 +142,10 @@ func setDefaults() {
 	// Default git settings
 	viper.SetDefault("git.branch_pattern", "{issue_id}-{slug}")
 
+	// Default Linear sync settings
+	viper.SetDefault("linear.sync_plan_on_save", true)
+	viper.SetDefault("linear.plan_label_name", "jig-plan")
+
 	jigDir, _ := JigDir()
 	viper.SetDefault("git.worktree_dir", filepath.Join(jigDir, "worktrees"))
 }
@@ -207,4 +213,20 @@ func CacheDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(jigDir, "cache"), nil
+}
+
+// ShouldSyncPlanOnSave returns whether plans should be synced to Linear on save
+func (c *LinearConfig) ShouldSyncPlanOnSave() bool {
+	if c.SyncPlanOnSave == nil {
+		return true // default
+	}
+	return *c.SyncPlanOnSave
+}
+
+// GetPlanLabelName returns the label name to use for plans in Linear
+func (c *LinearConfig) GetPlanLabelName() string {
+	if c.PlanLabelName == "" {
+		return "jig-plan" // default
+	}
+	return c.PlanLabelName
 }

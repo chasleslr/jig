@@ -37,7 +37,8 @@ type Reviewers struct {
 // Plan represents a complete work plan
 type Plan struct {
 	// Frontmatter fields
-	ID        string    `yaml:"id"`
+	ID        string    `yaml:"id"`                      // Internal plan ID (e.g., PLAN-1234567890)
+	IssueID   string    `yaml:"issue_id,omitempty"`      // Optional linked issue ID (e.g., NUM-41)
 	Title     string    `yaml:"title"`
 	Status    Status    `yaml:"status"`
 	Created   time.Time `yaml:"created"`
@@ -96,6 +97,11 @@ func (p *Plan) Validate() error {
 		return fmt.Errorf("plan author is required")
 	}
 	return nil
+}
+
+// HasLinkedIssue returns true if the plan is linked to an external issue
+func (p *Plan) HasLinkedIssue() bool {
+	return p.IssueID != ""
 }
 
 // TransitionTo changes the plan status with validation

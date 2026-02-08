@@ -122,6 +122,9 @@ func (c *Client) UpdateIssue(ctx context.Context, id string, updates *tracker.Is
 	if updates.ParentID != nil {
 		input["parentId"] = *updates.ParentID
 	}
+	if len(updates.Labels) > 0 {
+		input["labelIds"] = updates.Labels
+	}
 
 	resp, err := c.execute(ctx, &GraphQLRequest{
 		Query: query,
