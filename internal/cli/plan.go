@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -72,10 +73,13 @@ This command is typically invoked by Claude Code after creating a plan.
 Examples:
   jig plan save plan.md
   cat plan.md | jig plan save
-  jig plan save < plan.md`,
+  jig plan save < plan.md
+  jig plan save --session 12345 plan.md`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runPlanSave,
 }
+
+var planSaveSessionID string
 
 var planImportCmd = &cobra.Command{
 	Use:   "import <FILE>",
@@ -127,6 +131,7 @@ func init() {
 	planCmd.AddCommand(planShowCmd)
 	planCmd.AddCommand(planListCmd)
 
+	planSaveCmd.Flags().StringVar(&planSaveSessionID, "session", "", "session ID for tracking the saved plan (used by jig plan)")
 	planShowCmd.Flags().BoolVar(&planShowRaw, "raw", false, "output raw markdown instead of interactive view")
 }
 
@@ -176,6 +181,12 @@ func runPlanSave(cmd *cobra.Command, args []string) error {
 	// Mark plan as saved (for hook to detect)
 	markPlanSaved()
 
+	// Write the plan ID to the session directory for tracking
+	// This allows runPlanNew to know which plan was saved during this session
+	if planSaveSessionID != "" {
+		writeSavedPlanID(planSaveSessionID, p.ID)
+	}
+
 	printSuccess(fmt.Sprintf("Plan saved: %s", p.ID))
 	fmt.Printf("  Title: %s\n", p.Title)
 	fmt.Printf("\nNext steps:\n")
@@ -190,6 +201,39 @@ func markPlanSaved() {
 	jigDir := ".jig"
 	os.MkdirAll(jigDir, 0755)
 	os.WriteFile(filepath.Join(jigDir, "plan-saved.marker"), []byte{}, 0644)
+}
+
+// writeSavedPlanID writes the plan ID to the session directory for tracking
+// This allows the parent planning session to know which plan was saved
+func writeSavedPlanID(sessionID, planID string) {
+	sessionDir := filepath.Join(".jig", "sessions", sessionID)
+	os.MkdirAll(sessionDir, 0755)
+	os.WriteFile(filepath.Join(sessionDir, "saved-plan-id"), []byte(planID), 0644)
+}
+
+// readSavedPlanID reads the plan ID that was saved during a planning session
+// Returns empty string if no plan was saved or the file doesn't exist
+func readSavedPlanID(sessionID string) string {
+	sessionDir := filepath.Join(".jig", "sessions", sessionID)
+	data, err := os.ReadFile(filepath.Join(sessionDir, "saved-plan-id"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// displaySavedPlanNextSteps checks if a plan was saved during the session and displays next steps
+// Returns true if a plan was found and displayed, false otherwise
+func displaySavedPlanNextSteps(sessionID string) bool {
+	savedPlanID := readSavedPlanID(sessionID)
+	if savedPlanID == "" {
+		return false
+	}
+	printSuccess(fmt.Sprintf("Plan saved: %s", savedPlanID))
+	fmt.Printf("\nNext steps:\n")
+	fmt.Printf("  - View plan: jig plan show %s\n", savedPlanID)
+	fmt.Printf("  - Start implementation: jig implement %s\n", savedPlanID)
+	return true
 }
 
 func runPlanImport(cmd *cobra.Command, args []string) error {
@@ -452,18 +496,10 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	printInfo("Planning session ended")
 
-	// Check if a plan was saved during the session
-	if err := state.Init(); err == nil {
-		plans, _ := state.DefaultCache.ListPlans()
-		if len(plans) > 0 {
-			// Find the most recent plan
-			latest := plans[len(plans)-1]
-			printSuccess(fmt.Sprintf("Plan saved: %s", latest.ID))
-			fmt.Printf("\nNext steps:\n")
-			fmt.Printf("  - View plan: jig plan show %s\n", latest.ID)
-			fmt.Printf("  - Start implementation: jig implement %s\n", latest.ID)
-			return nil
-		}
+	// Check if a plan was saved during the session by reading from the session directory
+	// This is more reliable than guessing based on cache contents
+	if displaySavedPlanNextSteps(sessionID) {
+		return nil
 	}
 
 	// No plan saved - provide manual instructions
