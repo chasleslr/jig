@@ -102,8 +102,151 @@ func TestGetSessionMarkerPath(t *testing.T) {
 	})
 }
 
+func TestExtractSlugFromSession(t *testing.T) {
+	// Create a temporary directory
+	tmpDir, err := os.MkdirTemp("", "jig-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	t.Run("extracts slug from session JSONL", func(t *testing.T) {
+		// Create a sample session JSONL file
+		sessionFile := filepath.Join(tmpDir, "session.jsonl")
+		content := `{"type":"summary","timestamp":"2024-01-15T10:00:00Z"}
+{"type":"message","slug":"expressive-growing-duckling"}
+{"type":"tool","name":"Read"}
+{"slug":"expressive-growing-duckling","type":"assistant"}
+`
+		if err := os.WriteFile(sessionFile, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write session file: %v", err)
+		}
+
+		slug := extractSlugFromSession(sessionFile)
+		if slug != "expressive-growing-duckling" {
+			t.Errorf("expected slug 'expressive-growing-duckling', got '%s'", slug)
+		}
+	})
+
+	t.Run("returns last slug when multiple exist", func(t *testing.T) {
+		sessionFile := filepath.Join(tmpDir, "multi-slug.jsonl")
+		content := `{"slug":"first-slug"}
+{"slug":"second-slug"}
+{"type":"other"}
+{"slug":"third-slug"}
+`
+		if err := os.WriteFile(sessionFile, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write session file: %v", err)
+		}
+
+		slug := extractSlugFromSession(sessionFile)
+		if slug != "third-slug" {
+			t.Errorf("expected slug 'third-slug', got '%s'", slug)
+		}
+	})
+
+	t.Run("returns empty string when no slug", func(t *testing.T) {
+		sessionFile := filepath.Join(tmpDir, "no-slug.jsonl")
+		content := `{"type":"summary"}
+{"type":"message"}
+`
+		if err := os.WriteFile(sessionFile, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write session file: %v", err)
+		}
+
+		slug := extractSlugFromSession(sessionFile)
+		if slug != "" {
+			t.Errorf("expected empty slug, got '%s'", slug)
+		}
+	})
+
+	t.Run("returns empty string for non-existent file", func(t *testing.T) {
+		slug := extractSlugFromSession("/nonexistent/path/session.jsonl")
+		if slug != "" {
+			t.Errorf("expected empty slug for non-existent file, got '%s'", slug)
+		}
+	})
+
+	t.Run("handles malformed JSON lines gracefully", func(t *testing.T) {
+		sessionFile := filepath.Join(tmpDir, "malformed.jsonl")
+		content := `{"slug":"valid-slug"}
+not valid json
+{"type":"other"}
+{"slug":"another-valid-slug"}
+`
+		if err := os.WriteFile(sessionFile, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write session file: %v", err)
+		}
+
+		slug := extractSlugFromSession(sessionFile)
+		if slug != "another-valid-slug" {
+			t.Errorf("expected slug 'another-valid-slug', got '%s'", slug)
+		}
+	})
+
+	t.Run("handles empty file", func(t *testing.T) {
+		sessionFile := filepath.Join(tmpDir, "empty.jsonl")
+		if err := os.WriteFile(sessionFile, []byte{}, 0644); err != nil {
+			t.Fatalf("failed to write session file: %v", err)
+		}
+
+		slug := extractSlugFromSession(sessionFile)
+		if slug != "" {
+			t.Errorf("expected empty slug for empty file, got '%s'", slug)
+		}
+	})
+}
+
 func TestFindClaudePlan(t *testing.T) {
-	// Create a temporary plans directory
+	// Create a temporary directory structure
+	tmpDir, err := os.MkdirTemp("", "jig-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create a mock .claude/plans directory
+	plansDir := filepath.Join(tmpDir, ".claude", "plans")
+	if err := os.MkdirAll(plansDir, 0755); err != nil {
+		t.Fatalf("failed to create plans dir: %v", err)
+	}
+
+	t.Run("returns empty string for empty transcript path", func(t *testing.T) {
+		result := findClaudePlan("")
+		if result != "" {
+			t.Errorf("expected empty string for empty transcript path, got '%s'", result)
+		}
+	})
+
+	t.Run("returns empty string when no slug in session", func(t *testing.T) {
+		sessionFile := filepath.Join(tmpDir, "no-slug.jsonl")
+		content := `{"type":"message"}`
+		if err := os.WriteFile(sessionFile, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write session file: %v", err)
+		}
+
+		result := findClaudePlan(sessionFile)
+		if result != "" {
+			t.Errorf("expected empty string when no slug, got '%s'", result)
+		}
+	})
+
+	t.Run("returns empty string when plan file doesn't exist", func(t *testing.T) {
+		sessionFile := filepath.Join(tmpDir, "session-no-plan.jsonl")
+		content := `{"slug":"nonexistent-plan"}`
+		if err := os.WriteFile(sessionFile, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write session file: %v", err)
+		}
+
+		result := findClaudePlan(sessionFile)
+		if result != "" {
+			t.Errorf("expected empty string when plan file doesn't exist, got '%s'", result)
+		}
+	})
+}
+
+func TestFindClaudePlanIntegration(t *testing.T) {
+	// This test verifies the full flow with actual ~/.claude/plans directory
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatalf("failed to get home directory: %v", err)
@@ -114,11 +257,33 @@ func TestFindClaudePlan(t *testing.T) {
 		t.Skip("~/.claude/plans directory does not exist")
 	}
 
-	// Just test that the function doesn't crash and returns something reasonable
-	result := findClaudePlan("test-session")
-	// Result can be empty or a path, both are valid
-	if result != "" && filepath.Ext(result) != ".md" {
-		t.Errorf("expected empty string or .md file, got '%s'", result)
+	// Create a temporary session file and plan file
+	tmpDir, err := os.MkdirTemp("", "jig-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Use a unique slug to avoid conflicts
+	testSlug := "jig-test-slug-12345"
+	planFile := filepath.Join(plansDir, testSlug+".md")
+
+	// Create the plan file
+	if err := os.WriteFile(planFile, []byte("# Test Plan"), 0644); err != nil {
+		t.Fatalf("failed to write plan file: %v", err)
+	}
+	defer os.Remove(planFile)
+
+	// Create session file with the slug
+	sessionFile := filepath.Join(tmpDir, "test-session.jsonl")
+	content := `{"slug":"` + testSlug + `"}`
+	if err := os.WriteFile(sessionFile, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write session file: %v", err)
+	}
+
+	result := findClaudePlan(sessionFile)
+	if result != planFile {
+		t.Errorf("expected '%s', got '%s'", planFile, result)
 	}
 }
 
@@ -605,12 +770,29 @@ func TestRunHookExitPlanMode(t *testing.T) {
 		}
 	})
 
-	t.Run("denies exit when plan file exists and not saved", func(t *testing.T) {
-		// Create a plan file
+	t.Run("denies exit when plan file exists via session slug", func(t *testing.T) {
+		// Get home directory for plan file location
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			t.Fatalf("failed to get home directory: %v", err)
+		}
+
+		// Create plans directory if it doesn't exist
+		plansDir := filepath.Join(homeDir, ".claude", "plans")
+		os.MkdirAll(plansDir, 0755)
+
+		// Create a unique test slug and plan file
+		testSlug := "test-plan-deny-exit-12345"
+		planPath := filepath.Join(plansDir, testSlug+".md")
 		planContent := "# Test Plan\n\nThis is a test plan."
-		planPath := filepath.Join(tmpDir, "plan.md")
 		os.WriteFile(planPath, []byte(planContent), 0644)
 		defer os.Remove(planPath)
+
+		// Create a session transcript with the slug
+		sessionFile := filepath.Join(tmpDir, "deny-test-session.jsonl")
+		sessionContent := `{"slug":"` + testSlug + `"}`
+		os.WriteFile(sessionFile, []byte(sessionContent), 0644)
+		defer os.Remove(sessionFile)
 
 		// Make sure no markers exist
 		jigDir := filepath.Join(tmpDir, ".jig")
@@ -624,9 +806,16 @@ func TestRunHookExitPlanMode(t *testing.T) {
 		}
 		os.Stdout = w
 
-		// Create stdin with empty input
+		// Create stdin with transcript path
 		oldStdin := os.Stdin
 		stdinR, stdinW, _ := os.Pipe()
+		hookInput := HookInput{
+			TranscriptPath: sessionFile,
+			HookEventName:  "PreToolUse",
+			ToolName:       "ExitPlanMode",
+		}
+		inputData, _ := json.Marshal(hookInput)
+		stdinW.Write(inputData)
 		stdinW.Close()
 		os.Stdin = stdinR
 
@@ -665,6 +854,53 @@ func TestRunHookExitPlanMode(t *testing.T) {
 		}
 		if !contains(reason, "AskUserQuestion") {
 			t.Errorf("expected reason to contain AskUserQuestion prompt, got: %s", reason)
+		}
+	})
+
+	t.Run("allows exit when no transcript path provided", func(t *testing.T) {
+		// This test verifies that without a transcript path (no slug), exit is allowed
+		// even if local plan files exist (no silent fallback to findPlanFile)
+
+		// Create a local plan file (which should be ignored)
+		planPath := filepath.Join(tmpDir, "plan.md")
+		os.WriteFile(planPath, []byte("# Local Plan"), 0644)
+		defer os.Remove(planPath)
+
+		// Capture stdout
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdout = w
+
+		// Create stdin with empty input (no transcript path)
+		oldStdin := os.Stdin
+		stdinR, stdinW, _ := os.Pipe()
+		stdinW.Close()
+		os.Stdin = stdinR
+
+		err = runHookExitPlanMode(nil, nil)
+
+		w.Close()
+		os.Stdout = oldStdout
+		os.Stdin = oldStdin
+
+		if err != nil {
+			t.Fatalf("runHookExitPlanMode returned error: %v", err)
+		}
+
+		output, _ := io.ReadAll(r)
+		jsonStr := string(output)
+
+		var result map[string]interface{}
+		if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
+			t.Fatalf("failed to parse JSON output: %v", err)
+		}
+
+		hookOutput := result["hookSpecificOutput"].(map[string]interface{})
+		if hookOutput["permissionDecision"] != "allow" {
+			t.Errorf("expected permissionDecision 'allow' when no transcript path, got: %v", hookOutput["permissionDecision"])
 		}
 	})
 
