@@ -3,6 +3,8 @@ package tracker
 import (
 	"context"
 	"time"
+
+	"github.com/charleslr/jig/internal/plan"
 )
 
 // Status represents the status of an issue in the tracker
@@ -89,6 +91,13 @@ type Tracker interface {
 	// Team and project info
 	GetTeams(ctx context.Context) ([]Team, error)
 	GetProjects(ctx context.Context, teamID string) ([]Project, error)
+}
+
+// PlanSyncer defines the interface for syncing plans to a tracker
+type PlanSyncer interface {
+	// SyncPlanToIssue syncs a plan's content to its associated issue as a comment
+	// and adds a label to indicate the issue has an implementation plan.
+	SyncPlanToIssue(ctx context.Context, p *plan.Plan, labelName string) error
 }
 
 // Team represents a team in the tracker

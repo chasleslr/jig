@@ -6,16 +6,24 @@ import (
 	"sync"
 	"time"
 
+	"github.com/charleslr/jig/internal/plan"
 	"github.com/charleslr/jig/internal/tracker"
 )
 
-// Client is a mock implementation of the Tracker interface for testing
+// SyncedPlan tracks a plan that was synced to an issue
+type SyncedPlan struct {
+	Plan      *plan.Plan
+	LabelName string
+}
+
+// Client is a mock implementation of the Tracker and PlanSyncer interfaces for testing
 type Client struct {
-	mu        sync.RWMutex
-	issues    map[string]*tracker.Issue
-	comments  map[string][]*tracker.Comment
-	relations map[string][]string // issueID -> blockedByIDs
-	counter   int
+	mu          sync.RWMutex
+	issues      map[string]*tracker.Issue
+	comments    map[string][]*tracker.Comment
+	relations   map[string][]string // issueID -> blockedByIDs
+	syncedPlans []SyncedPlan        // tracks plans synced via SyncPlanToIssue
+	counter     int
 }
 
 // NewClient creates a new mock tracker client
@@ -284,4 +292,41 @@ func (c *Client) GetIssueByIdentifier(identifier string) *tracker.Issue {
 		}
 	}
 	return nil
+}
+
+// SyncPlanToIssue implements the PlanSyncer interface for testing
+func (c *Client) SyncPlanToIssue(ctx context.Context, p *plan.Plan, labelName string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if p.IssueID == "" {
+		return fmt.Errorf("plan has no linked issue")
+	}
+
+	// Verify the issue exists
+	found := false
+	for _, issue := range c.issues {
+		if issue.Identifier == p.IssueID || issue.ID == p.IssueID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("issue not found: %s", p.IssueID)
+	}
+
+	// Track the synced plan
+	c.syncedPlans = append(c.syncedPlans, SyncedPlan{
+		Plan:      p,
+		LabelName: labelName,
+	})
+
+	return nil
+}
+
+// GetSyncedPlans returns all plans that were synced via SyncPlanToIssue (for test assertions)
+func (c *Client) GetSyncedPlans() []SyncedPlan {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.syncedPlans
 }

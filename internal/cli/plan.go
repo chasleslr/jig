@@ -679,26 +679,35 @@ func shouldSyncToLinear(cfg *config.Config, p *plan.Plan) bool {
 
 // syncPlanToLinear syncs a plan to its associated Linear issue
 func syncPlanToLinear(ctx context.Context, cfg *config.Config, p *plan.Plan) error {
-	// Get Linear API key
+	syncer, err := getLinearPlanSyncer(cfg)
+	if err != nil {
+		return err
+	}
+	labelName := cfg.Linear.GetPlanLabelName()
+	return syncPlanWithSyncer(ctx, syncer, p, labelName)
+}
+
+// syncPlanWithSyncer syncs a plan using the provided PlanSyncer (for testability)
+func syncPlanWithSyncer(ctx context.Context, syncer tracker.PlanSyncer, p *plan.Plan, labelName string) error {
+	return syncer.SyncPlanToIssue(ctx, p, labelName)
+}
+
+// getLinearPlanSyncer creates a Linear client configured as a PlanSyncer
+func getLinearPlanSyncer(cfg *config.Config) (tracker.PlanSyncer, error) {
 	store, err := config.NewStore()
 	if err != nil {
-		return fmt.Errorf("failed to get config store: %w", err)
+		return nil, fmt.Errorf("failed to get config store: %w", err)
 	}
 	apiKey, err := store.GetLinearAPIKey()
 	if err != nil {
-		return fmt.Errorf("failed to get Linear API key: %w", err)
+		return nil, fmt.Errorf("failed to get Linear API key: %w", err)
 	}
 	if apiKey == "" {
 		apiKey = cfg.Linear.APIKey
 	}
 	if apiKey == "" {
-		return fmt.Errorf("Linear API key not configured")
+		return nil, fmt.Errorf("Linear API key not configured")
 	}
 
-	// Create Linear client
-	client := linear.NewClient(apiKey, cfg.Linear.TeamID, cfg.Linear.DefaultProject)
-
-	// Sync plan to issue
-	labelName := cfg.Linear.GetPlanLabelName()
-	return client.SyncPlanToIssue(ctx, p, labelName)
+	return linear.NewClient(apiKey, cfg.Linear.TeamID, cfg.Linear.DefaultProject), nil
 }

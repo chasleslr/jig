@@ -10,6 +10,7 @@ import (
 	"github.com/charleslr/jig/internal/config"
 	"github.com/charleslr/jig/internal/plan"
 	"github.com/charleslr/jig/internal/tracker"
+	trackerMock "github.com/charleslr/jig/internal/tracker/mock"
 )
 
 func TestFormatIssueContext(t *testing.T) {
@@ -1229,6 +1230,177 @@ func TestDisplaySavedPlanNextSteps(t *testing.T) {
 		result := displaySavedPlanNextSteps("nonexistent-session-xyz")
 		if result {
 			t.Error("expected displaySavedPlanNextSteps to return false when no plan exists")
+		}
+	})
+}
+
+func TestSyncPlanWithSyncer(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("calls syncer with plan and label name", func(t *testing.T) {
+		syncer := &mockPlanSyncer{}
+		p := &plan.Plan{
+			ID:               "PLAN-123",
+			IssueID:          "NUM-41",
+			Title:            "Test Plan",
+			ProblemStatement: "Test problem",
+			ProposedSolution: "Test solution",
+		}
+		labelName := "jig-plan"
+
+		err := syncPlanWithSyncer(ctx, syncer, p, labelName)
+		if err != nil {
+			t.Fatalf("syncPlanWithSyncer failed: %v", err)
+		}
+
+		// Verify the syncer was called correctly
+		if len(syncer.syncedPlans) != 1 {
+			t.Fatalf("expected 1 synced plan, got %d", len(syncer.syncedPlans))
+		}
+		if syncer.syncedPlans[0].Plan.ID != "PLAN-123" {
+			t.Errorf("expected plan ID 'PLAN-123', got '%s'", syncer.syncedPlans[0].Plan.ID)
+		}
+		if syncer.syncedPlans[0].LabelName != "jig-plan" {
+			t.Errorf("expected label name 'jig-plan', got '%s'", syncer.syncedPlans[0].LabelName)
+		}
+	})
+
+	t.Run("propagates syncer error", func(t *testing.T) {
+		syncer := &mockPlanSyncer{
+			err: fmt.Errorf("sync failed"),
+		}
+		p := &plan.Plan{
+			ID:      "PLAN-456",
+			IssueID: "NUM-42",
+		}
+
+		err := syncPlanWithSyncer(ctx, syncer, p, "test-label")
+		if err == nil {
+			t.Error("expected error from syncer to be propagated")
+		}
+		if !strings.Contains(err.Error(), "sync failed") {
+			t.Errorf("expected 'sync failed' error, got: %v", err)
+		}
+	})
+
+	t.Run("works with different label names", func(t *testing.T) {
+		syncer := &mockPlanSyncer{}
+		p := &plan.Plan{
+			ID:      "PLAN-789",
+			IssueID: "NUM-43",
+		}
+
+		err := syncPlanWithSyncer(ctx, syncer, p, "custom-plan-label")
+		if err != nil {
+			t.Fatalf("syncPlanWithSyncer failed: %v", err)
+		}
+
+		if syncer.syncedPlans[0].LabelName != "custom-plan-label" {
+			t.Errorf("expected label name 'custom-plan-label', got '%s'", syncer.syncedPlans[0].LabelName)
+		}
+	})
+}
+
+// mockPlanSyncer is a mock implementation of tracker.PlanSyncer for testing
+type mockPlanSyncer struct {
+	syncedPlans []syncedPlanRecord
+	err         error
+}
+
+type syncedPlanRecord struct {
+	Plan      *plan.Plan
+	LabelName string
+}
+
+func (m *mockPlanSyncer) SyncPlanToIssue(ctx context.Context, p *plan.Plan, labelName string) error {
+	if m.err != nil {
+		return m.err
+	}
+	m.syncedPlans = append(m.syncedPlans, syncedPlanRecord{
+		Plan:      p,
+		LabelName: labelName,
+	})
+	return nil
+}
+
+func TestSyncPlanWithSyncer_UsingTrackerMock(t *testing.T) {
+	// This test demonstrates that the tracker/mock package can be used
+	// for integration testing of the sync functionality
+
+	ctx := context.Background()
+
+	t.Run("integration with tracker mock client", func(t *testing.T) {
+		// Import and use the mock tracker client
+		mockClient := trackerMock.NewClient()
+
+		// Create a test issue first
+		issue, err := mockClient.CreateIssue(ctx, &tracker.Issue{
+			Title:       "Test Issue",
+			Description: "Test description",
+		})
+		if err != nil {
+			t.Fatalf("failed to create mock issue: %v", err)
+		}
+
+		// Create a plan linked to the issue
+		p := &plan.Plan{
+			ID:               "PLAN-INTEGRATION",
+			IssueID:          issue.Identifier,
+			Title:            "Integration Test Plan",
+			ProblemStatement: "Testing the integration",
+			ProposedSolution: "Use the mock client",
+		}
+
+		// Sync using the mock client's PlanSyncer implementation
+		err = syncPlanWithSyncer(ctx, mockClient, p, "test-label")
+		if err != nil {
+			t.Fatalf("syncPlanWithSyncer failed: %v", err)
+		}
+
+		// Verify the plan was synced via the mock's tracking
+		syncedPlans := mockClient.GetSyncedPlans()
+		if len(syncedPlans) != 1 {
+			t.Fatalf("expected 1 synced plan, got %d", len(syncedPlans))
+		}
+		if syncedPlans[0].Plan.ID != "PLAN-INTEGRATION" {
+			t.Errorf("expected plan ID 'PLAN-INTEGRATION', got '%s'", syncedPlans[0].Plan.ID)
+		}
+		if syncedPlans[0].LabelName != "test-label" {
+			t.Errorf("expected label name 'test-label', got '%s'", syncedPlans[0].LabelName)
+		}
+	})
+
+	t.Run("mock returns error for plan with no linked issue", func(t *testing.T) {
+		mockClient := trackerMock.NewClient()
+
+		p := &plan.Plan{
+			ID:      "PLAN-NO-ISSUE",
+			IssueID: "", // No linked issue
+		}
+
+		err := syncPlanWithSyncer(ctx, mockClient, p, "test-label")
+		if err == nil {
+			t.Error("expected error for plan with no linked issue")
+		}
+		if !strings.Contains(err.Error(), "no linked issue") {
+			t.Errorf("expected 'no linked issue' error, got: %v", err)
+		}
+	})
+
+	t.Run("mock returns error for nonexistent issue", func(t *testing.T) {
+		mockClient := trackerMock.NewClient()
+
+		p := &plan.Plan{
+			ID:      "PLAN-NONEXISTENT",
+			IssueID: "NONEXISTENT-999", // Issue doesn't exist
+		}
+
+		err := syncPlanWithSyncer(ctx, mockClient, p, "test-label")
+		if err == nil {
+			t.Error("expected error for nonexistent issue")
+		}
+		if !strings.Contains(err.Error(), "issue not found") {
+			t.Errorf("expected 'issue not found' error, got: %v", err)
 		}
 	})
 }
