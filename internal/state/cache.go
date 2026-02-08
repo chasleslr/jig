@@ -292,3 +292,8 @@ func Init() error {
 	DefaultCache, err = NewCache()
 	return err
 }
+
+// NewCacheWithDir creates a cache instance with a specific directory (for testing)
+func NewCacheWithDir(dir string) *Cache {
+	return &Cache{dir: dir}
+}
