@@ -159,12 +159,40 @@ func runMerge(cmd *cobra.Command, args []string) error {
 
 	printInfo(fmt.Sprintf("Merging PR #%d (%s)...", prNumber, pr.Title))
 
+	// Check if a worktree exists for this branch BEFORE merging
+	// If it does, we need to merge without --delete-branch, then clean up manually
+	var worktreeInfo *state.WorktreeInfo
+	if err := state.InitWorktreeState(); err == nil {
+		worktreeInfo, _ = state.DefaultWorktreeState.GetByBranch(pr.HeadRefName)
+	}
+
 	// Merge the PR
-	if err := git.MergePR(prNumber, mergeMethod, mergeDeleteBranch); err != nil {
+	// If a worktree exists for the branch, don't use --delete-branch flag
+	// because git will refuse to delete a branch that's checked out in a worktree
+	deleteBranchOnMerge := mergeDeleteBranch && worktreeInfo == nil
+	if err := git.MergePR(prNumber, mergeMethod, deleteBranchOnMerge); err != nil {
 		return fmt.Errorf("failed to merge PR: %w", err)
 	}
 
 	printSuccess(fmt.Sprintf("PR #%d merged!", prNumber))
+
+	// Clean up worktree if it exists (must be done before branch deletion)
+	if worktreeInfo != nil {
+		printInfo(fmt.Sprintf("Cleaning up worktree at %s...", worktreeInfo.Path))
+		if err := git.RemoveWorktree(worktreeInfo.Path); err != nil {
+			printWarning(fmt.Sprintf("Could not remove worktree: %v", err))
+		} else {
+			state.DefaultWorktreeState.Untrack(worktreeInfo.IssueID)
+			printSuccess("Worktree removed")
+		}
+
+		// Now delete the branch manually if requested
+		if mergeDeleteBranch {
+			if err := git.DeleteBranch(pr.HeadRefName, false); err != nil {
+				printWarning(fmt.Sprintf("Could not delete local branch: %v", err))
+			}
+		}
+	}
 
 	// Update plan status (both local cache and tracker) if we have an issue ID
 	if issueID != "" {
@@ -218,19 +246,6 @@ func runMerge(cmd *cobra.Command, args []string) error {
 				} else {
 					printSuccess("Issue status updated to Done")
 				}
-			}
-		}
-	}
-
-	// Clean up worktree
-	if err := state.InitWorktreeState(); err == nil {
-		if info, _ := state.DefaultWorktreeState.GetByBranch(pr.HeadRefName); info != nil {
-			printInfo(fmt.Sprintf("Cleaning up worktree at %s...", info.Path))
-			if err := git.RemoveWorktree(info.Path); err != nil {
-				printWarning(fmt.Sprintf("Could not remove worktree: %v", err))
-			} else {
-				state.DefaultWorktreeState.Untrack(info.IssueID)
-				printSuccess("Worktree removed")
 			}
 		}
 	}
