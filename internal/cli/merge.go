@@ -166,19 +166,58 @@ func runMerge(cmd *cobra.Command, args []string) error {
 
 	printSuccess(fmt.Sprintf("PR #%d merged!", prNumber))
 
-	// Update tracker status if we have an issue ID
+	// Update plan status (both local cache and tracker) if we have an issue ID
 	if issueID != "" {
 		printInfo(fmt.Sprintf("Updating issue %s status...", issueID))
 
-		t, err := getTracker(cfg)
-		if err != nil {
-			printWarning(fmt.Sprintf("Could not connect to tracker: %v", err))
-		} else {
-			// Try to transition to done
-			if err := t.TransitionIssue(ctx, issueID, "done"); err != nil {
-				printWarning(fmt.Sprintf("Could not update issue status: %v", err))
+		// Initialize state and try to update the plan
+		if err := state.Init(); err == nil {
+			if p, err := state.DefaultCache.GetPlan(issueID); err == nil && p != nil {
+				// Create tracker syncer if configured
+				var syncer state.TrackerSyncer
+				if cfg.Default.Tracker == "linear" {
+					syncer = getLinearSyncer(cfg)
+				}
+
+				// Use PlanStatusManager to complete the plan
+				mgr := state.NewPlanStatusManager(state.DefaultCache, syncer)
+				result, err := mgr.Complete(ctx, p)
+				if err != nil {
+					printWarning(fmt.Sprintf("Could not update plan status: %v", err))
+				} else {
+					if result.CacheSaved {
+						printSuccess("Plan status updated to Complete")
+					}
+					if result.TrackerSynced {
+						printSuccess("Issue status synced to tracker")
+					} else if result.TrackerError != nil {
+						printWarning(fmt.Sprintf("Could not sync to tracker: %v", result.TrackerError))
+					}
+				}
 			} else {
-				printSuccess("Issue status updated to Done")
+				// No local plan, just update tracker directly
+				t, err := getTracker(cfg)
+				if err != nil {
+					printWarning(fmt.Sprintf("Could not connect to tracker: %v", err))
+				} else {
+					if err := t.TransitionIssue(ctx, issueID, "done"); err != nil {
+						printWarning(fmt.Sprintf("Could not update issue status: %v", err))
+					} else {
+						printSuccess("Issue status updated to Done")
+					}
+				}
+			}
+		} else {
+			// State init failed, fall back to tracker-only update
+			t, err := getTracker(cfg)
+			if err != nil {
+				printWarning(fmt.Sprintf("Could not connect to tracker: %v", err))
+			} else {
+				if err := t.TransitionIssue(ctx, issueID, "done"); err != nil {
+					printWarning(fmt.Sprintf("Could not update issue status: %v", err))
+				} else {
+					printSuccess("Issue status updated to Done")
+				}
 			}
 		}
 	}

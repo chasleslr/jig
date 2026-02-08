@@ -104,7 +104,7 @@ func (p *Plan) TransitionTo(status Status) error {
 		StatusDraft:      {StatusReviewing, StatusInProgress}, // Allow direct to in-progress for quick implementation
 		StatusReviewing:  {StatusDraft, StatusApproved},
 		StatusApproved:   {StatusInProgress, StatusDraft}, // Can go back to draft for amendments
-		StatusInProgress: {StatusInReview, StatusApproved},
+		StatusInProgress: {StatusInReview, StatusComplete, StatusApproved},
 		StatusInReview:   {StatusComplete, StatusInProgress}, // Can go back to in-progress for changes
 		StatusComplete:   {},                                 // Terminal state
 	}
