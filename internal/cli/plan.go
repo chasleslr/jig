@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -188,7 +187,7 @@ func runPlanSave(cmd *cobra.Command, args []string) error {
 		if err := syncPlanToLinear(ctx, cfg, p); err != nil {
 			printWarning(fmt.Sprintf("Could not sync to Linear: %v", err))
 		} else {
-			printSuccess(fmt.Sprintf("Plan synced to Linear issue %s", p.ID))
+			printSuccess(fmt.Sprintf("Plan synced to Linear issue %s", p.IssueID))
 		}
 	}
 
@@ -420,14 +419,16 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 	// Determine author (from git config)
 	author := getGitAuthor()
 
-	// Generate a plan ID if none provided
-	planID := issueID
-	if planID == "" {
-		planID = fmt.Sprintf("PLAN-%d", time.Now().Unix())
-	}
+	// Always generate a local plan ID
+	planID := fmt.Sprintf("PLAN-%d", time.Now().Unix())
 
 	// Create initial plan metadata (the actual plan content is created by Claude)
 	p := plan.NewPlan(planID, planNewTitle, author)
+
+	// Link to issue if provided
+	if issueID != "" {
+		p.IssueID = issueID
+	}
 	p.ProblemStatement = "TODO: Define the problem being solved"
 	p.ProposedSolution = "TODO: Describe the proposed solution"
 
@@ -643,9 +644,6 @@ func getGitAuthor() string {
 	return "unknown"
 }
 
-// linearIssueIDPattern matches Linear issue IDs like "ENG-123", "NUM-41", etc.
-var linearIssueIDPattern = regexp.MustCompile(`^[A-Z]+-\d+$`)
-
 // shouldSyncToLinear returns true if the plan should be synced to Linear
 func shouldSyncToLinear(cfg *config.Config, p *plan.Plan) bool {
 	// Check if Linear is the configured tracker
@@ -658,9 +656,8 @@ func shouldSyncToLinear(cfg *config.Config, p *plan.Plan) bool {
 		return false
 	}
 
-	// Check if plan ID matches Linear issue ID format (e.g., "NUM-41")
-	// Plans with IDs like "PLAN-123456" are local-only
-	if !linearIssueIDPattern.MatchString(p.ID) {
+	// Only sync plans that are linked to an issue
+	if !p.HasLinkedIssue() {
 		return false
 	}
 

@@ -1118,6 +1118,25 @@ Test phase.
 	}
 }
 
+func TestPlanSaveCmd_NoSyncFlag(t *testing.T) {
+	// Test that the --no-sync flag is properly defined on the command
+	cmd := planSaveCmd
+
+	noSyncFlag := cmd.Flags().Lookup("no-sync")
+	if noSyncFlag == nil {
+		t.Fatal("expected --no-sync flag to be defined on planSaveCmd")
+	}
+
+	if noSyncFlag.Usage == "" {
+		t.Error("expected --no-sync flag to have usage text")
+	}
+
+	// Verify default value is false
+	if noSyncFlag.DefValue != "false" {
+		t.Errorf("expected --no-sync default value to be false, got %q", noSyncFlag.DefValue)
+	}
+}
+
 func TestDisplaySavedPlanNextSteps(t *testing.T) {
 	// Create a temp directory for testing
 	tempDir, err := os.MkdirTemp("", "jig-test-*")

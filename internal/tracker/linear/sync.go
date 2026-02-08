@@ -96,12 +96,16 @@ func buildPlanDescription(p *plan.Plan) string {
 
 // SyncPlanToIssue syncs a plan's content to its associated Linear issue as a comment
 // and adds a "jig-plan" label to indicate the issue has an implementation plan.
-// This is called when saving a plan that has a Linear issue ID.
+// This is called when saving a plan that has a linked issue (p.IssueID).
 func (c *Client) SyncPlanToIssue(ctx context.Context, p *plan.Plan, labelName string) error {
+	if p.IssueID == "" {
+		return fmt.Errorf("plan has no linked issue")
+	}
+
 	// Get the issue to get team ID and existing labels
-	issue, err := c.GetIssue(ctx, p.ID)
+	issue, err := c.GetIssue(ctx, p.IssueID)
 	if err != nil {
-		return fmt.Errorf("failed to get issue %s: %w", p.ID, err)
+		return fmt.Errorf("failed to get issue %s: %w", p.IssueID, err)
 	}
 
 	// Add plan content as a comment

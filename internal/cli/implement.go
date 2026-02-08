@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -263,7 +264,10 @@ func createPlanFromIssue(issue *tracker.Issue) *plan.Plan {
 		return nil
 	}
 
-	p := plan.NewPlan(issue.Identifier, issue.Title, issue.Assignee)
+	// Generate a local plan ID, link to the issue via IssueID
+	planID := fmt.Sprintf("PLAN-%d", time.Now().Unix())
+	p := plan.NewPlan(planID, issue.Title, issue.Assignee)
+	p.IssueID = issue.Identifier
 	p.ProblemStatement = issue.Description
 	return p
 }
