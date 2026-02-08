@@ -1,13 +1,12 @@
 package cli
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
-	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -122,12 +121,8 @@ func runHookExitPlanMode(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Find plan file - first check ~/.claude/plans/ for recently modified plans
-	planFile := findClaudePlan(hookInput.SessionID)
-	if planFile == "" {
-		// Fall back to checking current directory
-		planFile = findPlanFile()
-	}
+	// Find plan file by extracting slug from session transcript
+	planFile := findClaudePlan(hookInput.TranscriptPath)
 
 	if planFile == "" {
 		// No plan file found, allow exit
@@ -159,59 +154,58 @@ func findPlanFile() string {
 	return ""
 }
 
-// findClaudePlan looks for recently modified plan files in ~/.claude/plans/
-// It returns the most recently modified plan file from the last few minutes
-// Note: sessionID is currently unused but reserved for future session-specific plan lookup
-func findClaudePlan(_ string) string {
+// findClaudePlan looks for the plan file associated with the given session
+// by extracting the slug from the session JSONL log.
+// Returns empty string if no slug found or plan file doesn't exist.
+func findClaudePlan(transcriptPath string) string {
+	if transcriptPath == "" {
+		return ""
+	}
+
+	slug := extractSlugFromSession(transcriptPath)
+	if slug == "" {
+		return ""
+	}
+
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
 
-	plansDir := filepath.Join(homeDir, ".claude", "plans")
-	entries, err := os.ReadDir(plansDir)
+	planPath := filepath.Join(homeDir, ".claude", "plans", slug+".md")
+	if _, err := os.Stat(planPath); err == nil {
+		return planPath
+	}
+
+	return ""
+}
+
+// extractSlugFromSession parses the session JSONL and extracts the slug field.
+// Returns the most recent (last) slug found, or empty string if none.
+func extractSlugFromSession(transcriptPath string) string {
+	file, err := os.Open(transcriptPath)
 	if err != nil {
 		return ""
 	}
+	defer file.Close()
 
-	// Look for .md files modified in the last 5 minutes
-	cutoff := time.Now().Add(-5 * time.Minute)
+	scanner := bufio.NewScanner(file)
+	// Increase buffer size for large JSON lines
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
 
-	type planFile struct {
-		path    string
-		modTime time.Time
-	}
-
-	var recentPlans []planFile
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".md" {
-			continue
+	var lastSlug string
+	for scanner.Scan() {
+		var entry struct {
+			Slug string `json:"slug"`
 		}
-
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-
-		if info.ModTime().After(cutoff) {
-			recentPlans = append(recentPlans, planFile{
-				path:    filepath.Join(plansDir, entry.Name()),
-				modTime: info.ModTime(),
-			})
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err == nil {
+			if entry.Slug != "" {
+				lastSlug = entry.Slug
+			}
 		}
 	}
-
-	if len(recentPlans) == 0 {
-		return ""
-	}
-
-	// Sort by modification time, most recent first
-	sort.Slice(recentPlans, func(i, j int) bool {
-		return recentPlans[i].modTime.After(recentPlans[j].modTime)
-	})
-
-	// Return the most recently modified plan
-	return recentPlans[0].path
+	return lastSlug
 }
 
 // getMarkerPath returns the path to a marker file (legacy, non-session-scoped)
