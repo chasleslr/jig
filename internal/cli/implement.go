@@ -12,6 +12,7 @@ import (
 	"github.com/charleslr/jig/internal/runner"
 	"github.com/charleslr/jig/internal/state"
 	"github.com/charleslr/jig/internal/tracker"
+	"github.com/charleslr/jig/internal/tracker/linear"
 	"github.com/charleslr/jig/internal/ui"
 )
 
@@ -118,14 +119,16 @@ func runImplement(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Transition plan to in-progress if it's approved
-	if p != nil && p.Status == plan.StatusApproved {
+	// Transition plan to in-progress if it's draft or approved
+	if p != nil && (p.Status == plan.StatusDraft || p.Status == plan.StatusApproved) {
 		if err := p.TransitionTo(plan.StatusInProgress); err != nil {
 			printWarning(fmt.Sprintf("Could not transition plan to in-progress: %v", err))
 		} else {
 			if err := state.DefaultCache.SavePlan(p); err != nil {
 				printWarning(fmt.Sprintf("Could not save plan status: %v", err))
 			}
+			// Sync status to tracker (non-blocking)
+			syncPlanStatusToTracker(ctx, cfg, p)
 		}
 	}
 
@@ -307,4 +310,35 @@ func createPlanFromIssue(issue *tracker.Issue) *plan.Plan {
 	p := plan.NewPlan(issue.Identifier, issue.Title, issue.Assignee)
 	p.ProblemStatement = issue.Description
 	return p
+}
+
+// syncPlanStatusToTracker syncs the plan status to the configured tracker
+// This is non-blocking - failures are logged as warnings but don't abort the operation
+func syncPlanStatusToTracker(ctx context.Context, cfg *config.Config, p *plan.Plan) {
+	if cfg.Default.Tracker != "linear" {
+		return // Only Linear is supported for now
+	}
+
+	store, err := config.NewStore()
+	if err != nil {
+		printWarning(fmt.Sprintf("Could not sync status to tracker: %v", err))
+		return
+	}
+
+	apiKey, err := store.GetLinearAPIKey()
+	if err != nil {
+		printWarning(fmt.Sprintf("Could not sync status to tracker: %v", err))
+		return
+	}
+	if apiKey == "" {
+		apiKey = cfg.Linear.APIKey
+	}
+	if apiKey == "" {
+		return // No API key configured, skip sync
+	}
+
+	client := linear.NewClient(apiKey, cfg.Linear.TeamID, cfg.Linear.DefaultProject)
+	if err := client.SyncPlanStatus(ctx, p); err != nil {
+		printWarning(fmt.Sprintf("Could not sync status to tracker: %v", err))
+	}
 }

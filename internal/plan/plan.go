@@ -260,7 +260,7 @@ func hasCycle(phases []*Phase) bool {
 // TransitionTo changes the plan status with validation
 func (p *Plan) TransitionTo(status Status) error {
 	validTransitions := map[Status][]Status{
-		StatusDraft:      {StatusReviewing},
+		StatusDraft:      {StatusReviewing, StatusInProgress}, // Allow direct to in-progress for quick implementation
 		StatusReviewing:  {StatusDraft, StatusApproved},
 		StatusApproved:   {StatusInProgress, StatusDraft}, // Can go back to draft for amendments
 		StatusInProgress: {StatusInReview, StatusApproved},
@@ -291,7 +291,7 @@ func (p *Plan) SetPhaseStatus(phaseID string, status PhaseStatus) error {
 	p.Updated = time.Now()
 
 	// Update plan status based on phase progress
-	if status == PhaseStatusInProgress && p.Status == StatusApproved {
+	if status == PhaseStatusInProgress && (p.Status == StatusDraft || p.Status == StatusApproved) {
 		p.Status = StatusInProgress
 	}
 

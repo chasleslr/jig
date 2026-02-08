@@ -119,6 +119,34 @@ func (c *Client) SyncPhaseStatus(ctx context.Context, phase *plan.Phase) error {
 	return c.TransitionIssue(ctx, phase.IssueID, status)
 }
 
+// SyncPlanStatus syncs a plan's status to Linear
+func (c *Client) SyncPlanStatus(ctx context.Context, p *plan.Plan) error {
+	if p.ID == "" {
+		return fmt.Errorf("plan has no associated issue ID")
+	}
+
+	status := planStatusToTrackerStatus(p.Status)
+	return c.TransitionIssue(ctx, p.ID, status)
+}
+
+// planStatusToTrackerStatus converts a plan status to a tracker status
+func planStatusToTrackerStatus(status plan.Status) tracker.Status {
+	switch status {
+	case plan.StatusDraft, plan.StatusReviewing:
+		return tracker.StatusTodo
+	case plan.StatusApproved:
+		return tracker.StatusTodo
+	case plan.StatusInProgress:
+		return tracker.StatusInProgress
+	case plan.StatusInReview:
+		return tracker.StatusInReview
+	case plan.StatusComplete:
+		return tracker.StatusDone
+	default:
+		return tracker.StatusTodo
+	}
+}
+
 // buildPlanDescription creates a description for the main Linear issue
 func buildPlanDescription(p *plan.Plan) string {
 	desc := ""

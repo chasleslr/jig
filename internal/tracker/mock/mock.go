@@ -272,3 +272,16 @@ func equalIgnoreCase(a, b string) bool {
 	}
 	return true
 }
+
+// GetIssueByIdentifier retrieves a mock issue by its identifier (e.g., "MOCK-1")
+func (c *Client) GetIssueByIdentifier(identifier string) *tracker.Issue {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	for _, issue := range c.issues {
+		if issue.Identifier == identifier {
+			return issue
+		}
+	}
+	return nil
+}

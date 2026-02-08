@@ -188,3 +188,44 @@ func RenderIssueContext(issue *tracker.Issue) string {
 
 	return b.String()
 }
+
+// wrapText wraps text to the specified width
+func wrapText(text string, width int) string {
+	if width <= 0 {
+		return text
+	}
+
+	var result strings.Builder
+	lines := strings.Split(text, "\n")
+
+	for i, line := range lines {
+		if i > 0 {
+			result.WriteString("\n")
+		}
+
+		if len(line) <= width {
+			result.WriteString(line)
+			continue
+		}
+
+		// Wrap long lines
+		words := strings.Fields(line)
+		currentLine := ""
+		for _, word := range words {
+			if currentLine == "" {
+				currentLine = word
+			} else if len(currentLine)+1+len(word) <= width {
+				currentLine += " " + word
+			} else {
+				result.WriteString(currentLine)
+				result.WriteString("\n")
+				currentLine = word
+			}
+		}
+		if currentLine != "" {
+			result.WriteString(currentLine)
+		}
+	}
+
+	return result.String()
+}

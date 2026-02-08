@@ -165,3 +165,32 @@ func TestPlanStatusTransition(t *testing.T) {
 		t.Error("expected error for invalid transition draft -> complete")
 	}
 }
+
+func TestPlanStatusTransitionDraftToInProgress(t *testing.T) {
+	p := NewPlan("ENG-123", "Test", "user")
+
+	// Draft -> InProgress is valid (quick implementation bypass)
+	if err := p.TransitionTo(StatusInProgress); err != nil {
+		t.Errorf("unexpected error for draft -> in-progress: %v", err)
+	}
+
+	if p.Status != StatusInProgress {
+		t.Errorf("expected status 'in-progress', got '%s'", p.Status)
+	}
+}
+
+func TestSetPhaseStatusTransitionsDraftPlan(t *testing.T) {
+	p := NewPlan("ENG-123", "Test", "user")
+	p.Phases = []*Phase{
+		{ID: "phase-1", Title: "Phase 1", Status: PhaseStatusPending},
+	}
+
+	// Setting a phase to in-progress should transition draft plan to in-progress
+	if err := p.SetPhaseStatus("phase-1", PhaseStatusInProgress); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	if p.Status != StatusInProgress {
+		t.Errorf("expected plan status 'in-progress', got '%s'", p.Status)
+	}
+}
