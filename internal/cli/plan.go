@@ -291,27 +291,11 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 		issueID = args[0]
 
 		// Fetch issue with spinner for better UX during API latency
-		var fetchErr error
-		if ui.IsInteractive() {
-			fetchErr = ui.RunWithSpinner(fmt.Sprintf("Fetching issue %s", issueID), func() error {
-				t, err := getTracker(cfg)
-				if err != nil {
-					return err
-				}
-				issue, err = t.GetIssue(ctx, issueID)
-				return err
-			})
-		} else {
-			t, err := getTracker(cfg)
-			if err != nil {
-				fetchErr = err
-			} else {
-				issue, fetchErr = t.GetIssue(ctx, issueID)
-			}
-		}
+		fetchResult := fetchIssueWithDeps(ctx, issueID, defaultIssueFetchDeps(cfg))
+		issue = fetchResult.Issue
 
-		if fetchErr != nil {
-			printWarning(fmt.Sprintf("Could not fetch issue: %v", fetchErr))
+		if fetchResult.Err != nil {
+			printWarning(fmt.Sprintf("Could not fetch issue: %v", fetchResult.Err))
 		} else {
 			// Show interactive menu if we have an issue and are in interactive mode
 			if ui.IsInteractive() {
@@ -513,6 +497,56 @@ func getTracker(cfg *config.Config) (tracker.Tracker, error) {
 type issueResult struct {
 	IssueContext string
 	Title        string // Updated title (from issue if original was empty)
+}
+
+// issueFetchDeps holds injectable dependencies for fetching issues
+type issueFetchDeps struct {
+	isInteractive func() bool
+	runSpinner    func(message string, fn func() error) error
+	getTracker    func() (tracker.Tracker, error)
+}
+
+// fetchIssueResult holds the result of fetching an issue
+type fetchIssueResult struct {
+	Issue *tracker.Issue
+	Err   error
+}
+
+// fetchIssueWithDeps fetches an issue using the provided dependencies.
+// In interactive mode, it uses a spinner for better UX during API latency.
+// In non-interactive mode, it fetches directly.
+func fetchIssueWithDeps(ctx context.Context, issueID string, deps issueFetchDeps) fetchIssueResult {
+	var issue *tracker.Issue
+	var fetchErr error
+
+	if deps.isInteractive() {
+		fetchErr = deps.runSpinner(fmt.Sprintf("Fetching issue %s", issueID), func() error {
+			t, err := deps.getTracker()
+			if err != nil {
+				return err
+			}
+			issue, err = t.GetIssue(ctx, issueID)
+			return err
+		})
+	} else {
+		t, err := deps.getTracker()
+		if err != nil {
+			fetchErr = err
+		} else {
+			issue, fetchErr = t.GetIssue(ctx, issueID)
+		}
+	}
+
+	return fetchIssueResult{Issue: issue, Err: fetchErr}
+}
+
+// defaultIssueFetchDeps returns the production dependencies for fetching issues
+func defaultIssueFetchDeps(cfg *config.Config) issueFetchDeps {
+	return issueFetchDeps{
+		isInteractive: ui.IsInteractive,
+		runSpinner:    ui.RunWithSpinner,
+		getTracker:    func() (tracker.Tracker, error) { return getTracker(cfg) },
+	}
 }
 
 // processIssueForPlan processes a successfully fetched issue and returns

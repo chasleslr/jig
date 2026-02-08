@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -312,6 +314,242 @@ func TestProcessIssueForPlanTitlePrecedence(t *testing.T) {
 	if result.Title != "Original Issue Title" {
 		t.Errorf("processIssueForPlan() should use issue title when no explicit title, got %q", result.Title)
 	}
+}
+
+func TestFetchIssueWithDeps(t *testing.T) {
+	ctx := context.Background()
+	testIssue := &tracker.Issue{
+		ID:         "test-id",
+		Identifier: "TEST-123",
+		Title:      "Test Issue",
+		Status:     tracker.StatusTodo,
+	}
+
+	t.Run("interactive mode uses spinner and returns issue on success", func(t *testing.T) {
+		spinnerCalled := false
+		spinnerMessage := ""
+
+		deps := issueFetchDeps{
+			isInteractive: func() bool { return true },
+			runSpinner: func(message string, fn func() error) error {
+				spinnerCalled = true
+				spinnerMessage = message
+				return fn() // Execute the function passed to spinner
+			},
+			getTracker: func() (tracker.Tracker, error) {
+				return &mockTrackerForFetch{issue: testIssue}, nil
+			},
+		}
+
+		result := fetchIssueWithDeps(ctx, "TEST-123", deps)
+
+		if !spinnerCalled {
+			t.Error("expected spinner to be called in interactive mode")
+		}
+		if !strings.Contains(spinnerMessage, "TEST-123") {
+			t.Errorf("spinner message should contain issue ID, got %q", spinnerMessage)
+		}
+		if result.Err != nil {
+			t.Errorf("unexpected error: %v", result.Err)
+		}
+		if result.Issue == nil {
+			t.Error("expected issue to be returned")
+		}
+		if result.Issue.Identifier != "TEST-123" {
+			t.Errorf("expected issue identifier TEST-123, got %s", result.Issue.Identifier)
+		}
+	})
+
+	t.Run("non-interactive mode fetches directly without spinner", func(t *testing.T) {
+		spinnerCalled := false
+
+		deps := issueFetchDeps{
+			isInteractive: func() bool { return false },
+			runSpinner: func(message string, fn func() error) error {
+				spinnerCalled = true
+				return fn()
+			},
+			getTracker: func() (tracker.Tracker, error) {
+				return &mockTrackerForFetch{issue: testIssue}, nil
+			},
+		}
+
+		result := fetchIssueWithDeps(ctx, "TEST-123", deps)
+
+		if spinnerCalled {
+			t.Error("spinner should not be called in non-interactive mode")
+		}
+		if result.Err != nil {
+			t.Errorf("unexpected error: %v", result.Err)
+		}
+		if result.Issue == nil {
+			t.Error("expected issue to be returned")
+		}
+	})
+
+	t.Run("interactive mode handles tracker error", func(t *testing.T) {
+		trackerErr := fmt.Errorf("failed to connect to tracker")
+
+		deps := issueFetchDeps{
+			isInteractive: func() bool { return true },
+			runSpinner: func(message string, fn func() error) error {
+				return fn()
+			},
+			getTracker: func() (tracker.Tracker, error) {
+				return nil, trackerErr
+			},
+		}
+
+		result := fetchIssueWithDeps(ctx, "TEST-123", deps)
+
+		if result.Err == nil {
+			t.Error("expected error when tracker fails")
+		}
+		if !strings.Contains(result.Err.Error(), "failed to connect") {
+			t.Errorf("expected tracker error, got %v", result.Err)
+		}
+		if result.Issue != nil {
+			t.Error("expected nil issue when tracker fails")
+		}
+	})
+
+	t.Run("non-interactive mode handles tracker error", func(t *testing.T) {
+		trackerErr := fmt.Errorf("failed to connect to tracker")
+
+		deps := issueFetchDeps{
+			isInteractive: func() bool { return false },
+			runSpinner: func(message string, fn func() error) error {
+				return fn()
+			},
+			getTracker: func() (tracker.Tracker, error) {
+				return nil, trackerErr
+			},
+		}
+
+		result := fetchIssueWithDeps(ctx, "TEST-123", deps)
+
+		if result.Err == nil {
+			t.Error("expected error when tracker fails")
+		}
+		if result.Issue != nil {
+			t.Error("expected nil issue when tracker fails")
+		}
+	})
+
+	t.Run("interactive mode handles issue fetch error", func(t *testing.T) {
+		deps := issueFetchDeps{
+			isInteractive: func() bool { return true },
+			runSpinner: func(message string, fn func() error) error {
+				return fn()
+			},
+			getTracker: func() (tracker.Tracker, error) {
+				return &mockTrackerForFetch{err: fmt.Errorf("issue not found")}, nil
+			},
+		}
+
+		result := fetchIssueWithDeps(ctx, "INVALID-ID", deps)
+
+		if result.Err == nil {
+			t.Error("expected error when issue fetch fails")
+		}
+		if !strings.Contains(result.Err.Error(), "issue not found") {
+			t.Errorf("expected issue fetch error, got %v", result.Err)
+		}
+	})
+
+	t.Run("non-interactive mode handles issue fetch error", func(t *testing.T) {
+		deps := issueFetchDeps{
+			isInteractive: func() bool { return false },
+			runSpinner: func(message string, fn func() error) error {
+				return fn()
+			},
+			getTracker: func() (tracker.Tracker, error) {
+				return &mockTrackerForFetch{err: fmt.Errorf("issue not found")}, nil
+			},
+		}
+
+		result := fetchIssueWithDeps(ctx, "INVALID-ID", deps)
+
+		if result.Err == nil {
+			t.Error("expected error when issue fetch fails")
+		}
+	})
+
+	t.Run("spinner error is propagated", func(t *testing.T) {
+		spinnerErr := fmt.Errorf("spinner crashed")
+
+		deps := issueFetchDeps{
+			isInteractive: func() bool { return true },
+			runSpinner: func(message string, fn func() error) error {
+				// Simulate spinner crashing before or during execution
+				return spinnerErr
+			},
+			getTracker: func() (tracker.Tracker, error) {
+				return &mockTrackerForFetch{issue: testIssue}, nil
+			},
+		}
+
+		result := fetchIssueWithDeps(ctx, "TEST-123", deps)
+
+		if result.Err == nil {
+			t.Error("expected error when spinner crashes")
+		}
+		if result.Err != spinnerErr {
+			t.Errorf("expected spinner error to be propagated, got %v", result.Err)
+		}
+	})
+}
+
+// mockTrackerForFetch is a minimal mock tracker for testing fetchIssueWithDeps
+type mockTrackerForFetch struct {
+	issue *tracker.Issue
+	err   error
+}
+
+func (m *mockTrackerForFetch) GetIssue(ctx context.Context, id string) (*tracker.Issue, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.issue, nil
+}
+
+// Stub implementations for the Tracker interface
+func (m *mockTrackerForFetch) CreateIssue(ctx context.Context, issue *tracker.Issue) (*tracker.Issue, error) {
+	return nil, nil
+}
+func (m *mockTrackerForFetch) UpdateIssue(ctx context.Context, id string, updates *tracker.IssueUpdate) error {
+	return nil
+}
+func (m *mockTrackerForFetch) SearchIssues(ctx context.Context, query string) ([]*tracker.Issue, error) {
+	return nil, nil
+}
+func (m *mockTrackerForFetch) CreateSubIssue(ctx context.Context, parentID string, issue *tracker.Issue) (*tracker.Issue, error) {
+	return nil, nil
+}
+func (m *mockTrackerForFetch) GetSubIssues(ctx context.Context, parentID string) ([]*tracker.Issue, error) {
+	return nil, nil
+}
+func (m *mockTrackerForFetch) AddComment(ctx context.Context, issueID string, body string) (*tracker.Comment, error) {
+	return nil, nil
+}
+func (m *mockTrackerForFetch) GetComments(ctx context.Context, issueID string) ([]*tracker.Comment, error) {
+	return nil, nil
+}
+func (m *mockTrackerForFetch) TransitionIssue(ctx context.Context, id string, status tracker.Status) error {
+	return nil
+}
+func (m *mockTrackerForFetch) GetAvailableStatuses(ctx context.Context, id string) ([]tracker.Status, error) {
+	return nil, nil
+}
+func (m *mockTrackerForFetch) GetTeams(ctx context.Context) ([]tracker.Team, error) { return nil, nil }
+func (m *mockTrackerForFetch) GetProjects(ctx context.Context, teamID string) ([]tracker.Project, error) {
+	return nil, nil
+}
+func (m *mockTrackerForFetch) SetBlocking(ctx context.Context, blockerID, blockedID string) error {
+	return nil
+}
+func (m *mockTrackerForFetch) GetBlockedBy(ctx context.Context, issueID string) ([]*tracker.Issue, error) {
+	return nil, nil
 }
 
 func TestMarkPlanSaved(t *testing.T) {
