@@ -164,23 +164,36 @@ When implementation is complete, provide a summary:
 
 ### Step 7: Guide PR Creation
 
-Suggest the user create a PR:
+When implementation is complete, guide the user through PR creation using `/jig:pr`:
 
-```bash
-# Stage and commit any remaining changes
-git add -A
-git commit -m "feat: implement <feature-name>
+1. **Ensure changes are committed**:
+   ```bash
+   git status --porcelain
+   ```
 
-<summary of what was done>
+   If there are uncommitted changes:
+   ```bash
+   git add -A
+   git commit -m "feat: implement <feature-name>
 
-Implements: <issue-id>"
+   <summary of what was done>
 
-# Push the branch
-git push -u origin HEAD
+   Implements: <issue-id>"
+   ```
 
-# Create the PR
-gh pr create --draft --title "<title>" --body "<body>"
-```
+2. **Push the branch**:
+   ```bash
+   git push -u origin HEAD
+   ```
+
+3. **Suggest using /jig:pr**:
+
+   Tell the user: "Would you like to create a PR now? Run `/jig:pr` to create a draft PR with the plan info and record the PR in metadata for easy merging later."
+
+   Alternatively, they can run directly:
+   ```bash
+   jig pr
+   ```
 
 ---
 
