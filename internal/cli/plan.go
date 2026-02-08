@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -80,6 +81,7 @@ Examples:
 }
 
 var planSaveSessionID string
+var planSaveNoSync bool
 
 var planImportCmd = &cobra.Command{
 	Use:   "import <FILE>",
@@ -132,6 +134,7 @@ func init() {
 	planCmd.AddCommand(planListCmd)
 
 	planSaveCmd.Flags().StringVar(&planSaveSessionID, "session", "", "session ID for tracking the saved plan (used by jig plan)")
+	planSaveCmd.Flags().BoolVar(&planSaveNoSync, "no-sync", false, "don't sync plan to Linear")
 	planShowCmd.Flags().BoolVar(&planShowRaw, "raw", false, "output raw markdown instead of interactive view")
 }
 
@@ -176,6 +179,17 @@ func runPlanSave(cmd *cobra.Command, args []string) error {
 	// Save to cache
 	if err := state.DefaultCache.SavePlan(p); err != nil {
 		return fmt.Errorf("failed to save plan: %w", err)
+	}
+
+	// Sync to Linear if applicable
+	cfg := config.Get()
+	if !planSaveNoSync && shouldSyncToLinear(cfg, p) {
+		ctx := context.Background()
+		if err := syncPlanToLinear(ctx, cfg, p); err != nil {
+			printWarning(fmt.Sprintf("Could not sync to Linear: %v", err))
+		} else {
+			printSuccess(fmt.Sprintf("Plan synced to Linear issue %s", p.ID))
+		}
 	}
 
 	// Mark plan as saved (for hook to detect)
@@ -627,4 +641,67 @@ func getGitAuthor() string {
 		return name
 	}
 	return "unknown"
+}
+
+// linearIssueIDPattern matches Linear issue IDs like "ENG-123", "NUM-41", etc.
+var linearIssueIDPattern = regexp.MustCompile(`^[A-Z]+-\d+$`)
+
+// shouldSyncToLinear returns true if the plan should be synced to Linear
+func shouldSyncToLinear(cfg *config.Config, p *plan.Plan) bool {
+	// Check if Linear is the configured tracker
+	if cfg.Default.Tracker != "linear" {
+		return false
+	}
+
+	// Check if sync is enabled in config
+	if !cfg.Linear.ShouldSyncPlanOnSave() {
+		return false
+	}
+
+	// Check if plan ID matches Linear issue ID format (e.g., "NUM-41")
+	// Plans with IDs like "PLAN-123456" are local-only
+	if !linearIssueIDPattern.MatchString(p.ID) {
+		return false
+	}
+
+	// Check if Linear API key is configured
+	store, err := config.NewStore()
+	if err != nil {
+		return false
+	}
+	apiKey, _ := store.GetLinearAPIKey()
+	if apiKey == "" {
+		apiKey = cfg.Linear.APIKey
+	}
+	if apiKey == "" {
+		return false
+	}
+
+	return true
+}
+
+// syncPlanToLinear syncs a plan to its associated Linear issue
+func syncPlanToLinear(ctx context.Context, cfg *config.Config, p *plan.Plan) error {
+	// Get Linear API key
+	store, err := config.NewStore()
+	if err != nil {
+		return fmt.Errorf("failed to get config store: %w", err)
+	}
+	apiKey, err := store.GetLinearAPIKey()
+	if err != nil {
+		return fmt.Errorf("failed to get Linear API key: %w", err)
+	}
+	if apiKey == "" {
+		apiKey = cfg.Linear.APIKey
+	}
+	if apiKey == "" {
+		return fmt.Errorf("Linear API key not configured")
+	}
+
+	// Create Linear client
+	client := linear.NewClient(apiKey, cfg.Linear.TeamID, cfg.Linear.DefaultProject)
+
+	// Sync plan to issue
+	labelName := cfg.Linear.GetPlanLabelName()
+	return client.SyncPlanToIssue(ctx, p, labelName)
 }

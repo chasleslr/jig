@@ -2,7 +2,10 @@ package linear
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/charleslr/jig/internal/plan"
 	"github.com/charleslr/jig/internal/tracker"
@@ -89,4 +92,162 @@ func buildPlanDescription(p *plan.Plan) string {
 	}
 
 	return desc
+}
+
+// SyncPlanToIssue syncs a plan's content to its associated Linear issue as a comment
+// and adds a "jig-plan" label to indicate the issue has an implementation plan.
+// This is called when saving a plan that has a Linear issue ID.
+func (c *Client) SyncPlanToIssue(ctx context.Context, p *plan.Plan, labelName string) error {
+	// Get the issue to get team ID and existing labels
+	issue, err := c.GetIssue(ctx, p.ID)
+	if err != nil {
+		return fmt.Errorf("failed to get issue %s: %w", p.ID, err)
+	}
+
+	// Add plan content as a comment
+	commentBody := formatPlanComment(p)
+	if _, err := c.AddComment(ctx, issue.ID, commentBody); err != nil {
+		return fmt.Errorf("failed to add plan comment: %w", err)
+	}
+
+	// Get or create the jig-plan label
+	label, err := c.GetOrCreateLabel(ctx, issue.TeamID, labelName)
+	if err != nil {
+		return fmt.Errorf("failed to get/create label %q: %w", labelName, err)
+	}
+
+	// Get existing label IDs from the issue
+	existingLabelIDs := getIssueLabelIDs(ctx, c, issue.ID)
+
+	// Add label to issue if not already present
+	if err := c.AddLabelToIssue(ctx, issue.ID, label.ID, existingLabelIDs); err != nil {
+		return fmt.Errorf("failed to add label to issue: %w", err)
+	}
+
+	return nil
+}
+
+// getIssueLabelIDs fetches the current label IDs for an issue
+func getIssueLabelIDs(ctx context.Context, c *Client, issueID string) []string {
+	// Re-fetch the issue to get current labels with their IDs
+	// We need to use a custom query since GetIssue returns label names, not IDs
+	query := `
+		query GetIssueLabels($id: String!) {
+			issue(id: $id) {
+				labels {
+					nodes {
+						id
+					}
+				}
+			}
+		}
+	`
+
+	resp, err := c.execute(ctx, &GraphQLRequest{
+		Query: query,
+		Variables: map[string]interface{}{
+			"id": issueID,
+		},
+	})
+	if err != nil {
+		return nil
+	}
+
+	var result struct {
+		Issue struct {
+			Labels struct {
+				Nodes []struct {
+					ID string `json:"id"`
+				} `json:"nodes"`
+			} `json:"labels"`
+		} `json:"issue"`
+	}
+
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil
+	}
+
+	ids := make([]string, len(result.Issue.Labels.Nodes))
+	for i, node := range result.Issue.Labels.Nodes {
+		ids[i] = node.ID
+	}
+	return ids
+}
+
+// formatPlanComment formats a plan as a markdown comment for Linear
+func formatPlanComment(p *plan.Plan) string {
+	var sb strings.Builder
+
+	sb.WriteString("## 📋 Implementation Plan\n\n")
+	sb.WriteString(fmt.Sprintf("**Synced:** %s\n\n", time.Now().UTC().Format("2006-01-02 15:04 UTC")))
+	sb.WriteString("---\n\n")
+
+	if p.ProblemStatement != "" {
+		sb.WriteString("### Problem Statement\n\n")
+		sb.WriteString(p.ProblemStatement)
+		sb.WriteString("\n\n")
+	}
+
+	if p.ProposedSolution != "" {
+		sb.WriteString("### Proposed Solution\n\n")
+		sb.WriteString(p.ProposedSolution)
+		sb.WriteString("\n\n")
+	}
+
+	// Include raw content sections beyond problem/solution if present
+	// This captures acceptance criteria, implementation details, etc.
+	if p.RawContent != "" {
+		// Extract additional sections from raw content
+		additionalSections := extractAdditionalSections(p.RawContent)
+		if additionalSections != "" {
+			sb.WriteString(additionalSections)
+			sb.WriteString("\n")
+		}
+	}
+
+	sb.WriteString("---\n\n")
+	sb.WriteString("*This plan was synced by [jig](https://github.com/charleslr/jig)*")
+
+	return sb.String()
+}
+
+// extractAdditionalSections extracts sections from raw content that aren't
+// Problem Statement or Proposed Solution (those are already included separately)
+func extractAdditionalSections(rawContent string) string {
+	var sb strings.Builder
+	lines := strings.Split(rawContent, "\n")
+
+	inSection := false
+	skipSection := false
+
+	for _, line := range lines {
+		// Check for section headers
+		if strings.HasPrefix(line, "## ") || strings.HasPrefix(line, "### ") {
+			sectionName := strings.TrimPrefix(strings.TrimPrefix(line, "### "), "## ")
+			sectionName = strings.TrimSpace(sectionName)
+
+			// Skip sections we already include
+			if strings.Contains(strings.ToLower(sectionName), "problem statement") ||
+				strings.Contains(strings.ToLower(sectionName), "proposed solution") {
+				skipSection = true
+				inSection = false
+				continue
+			}
+
+			// Start a new section
+			skipSection = false
+			inSection = true
+			sb.WriteString(line)
+			sb.WriteString("\n")
+			continue
+		}
+
+		// Write content for non-skipped sections
+		if inSection && !skipSection {
+			sb.WriteString(line)
+			sb.WriteString("\n")
+		}
+	}
+
+	return strings.TrimSpace(sb.String())
 }
