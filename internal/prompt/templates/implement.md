@@ -9,43 +9,14 @@ You are implementing a planned feature. Follow the plan carefully and methodical
 ### Solution Overview
 {{.Plan.ProposedSolution}}
 {{end}}
-
-{{if hasPhases .Plan}}
-### All Phases
-{{range $i, $phase := .Plan.Phases}}
-{{$i | printf "%d"}}. **{{$phase.Title}}** - {{phaseStatus $phase.Status}}
-{{end}}
-{{end}}
-{{end}}
-
-{{if .Phase}}
-## Current Phase: {{.Phase.Title}}
-
-{{if .Phase.Description}}
-### Description
-{{.Phase.Description}}
-{{end}}
-
-{{if .Phase.Acceptance}}
-### Acceptance Criteria
-{{range .Phase.Acceptance}}
-- [ ] {{.}}
-{{end}}
-{{end}}
-
-{{if .Phase.DependsOn}}
-### Dependencies
-This phase depends on: {{join .Phase.DependsOn ", "}}
-Ensure these are complete before proceeding.
-{{end}}
 {{end}}
 
 ## Implementation Guidelines
 
 ### Before Starting
-1. Review the acceptance criteria carefully
-2. Understand how this phase fits into the larger plan
-3. Check that any dependencies are satisfied
+1. Review the plan requirements carefully
+2. Understand the problem being solved
+3. Review the existing codebase for context
 
 ### While Implementing
 1. Make changes incrementally
@@ -54,17 +25,17 @@ Ensure these are complete before proceeding.
 4. Follow existing code patterns and conventions
 
 ### Quality Checklist
-- [ ] All acceptance criteria are met
+- [ ] All requirements are met
 - [ ] Code follows project conventions
 - [ ] No obvious security issues
 - [ ] Error cases are handled
 - [ ] Code is testable
 
 ### Commit Convention
-Use clear commit messages that reference the phase:
+Use clear commit messages:
 
 ```
-feat(phase-id): Brief description
+feat: Brief description
 
 - Detail 1
 - Detail 2
@@ -77,8 +48,8 @@ Working on branch: `{{.BranchName}}`
 
 ## Your Task
 
-Implement the current phase according to the plan. Focus on:
-1. Meeting all acceptance criteria
+Implement the plan according to the requirements. Focus on:
+1. Meeting all requirements
 2. Writing clean, maintainable code
 3. Making atomic commits
 

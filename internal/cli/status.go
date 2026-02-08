@@ -19,7 +19,7 @@ var statusCmd = &cobra.Command{
 	Long: `Display the status of the current issue or a specific issue.
 
 Shows:
-- Plan status and phase progress
+- Plan status
 - Linear issue status
 - PR status and unresolved comments
 - Worktree information`,
@@ -126,28 +126,6 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		fmt.Println("## Plan")
 		fmt.Printf("  Title:  %s\n", plan.Title)
 		fmt.Printf("  Status: %s\n", plan.Status)
-
-		if len(plan.Phases) > 0 {
-			fmt.Println()
-			fmt.Println("  Phases:")
-			for _, phase := range plan.Phases {
-				status := "⬜"
-				switch phase.Status {
-				case "in-progress":
-					status = "🔄"
-				case "complete":
-					status = "✅"
-				case "blocked":
-					status = "🚫"
-				}
-				deps := ""
-				if len(phase.DependsOn) > 0 {
-					deps = fmt.Sprintf(" (depends on: %s)", strings.Join(phase.DependsOn, ", "))
-				}
-				fmt.Printf("    %s %s%s\n", status, phase.Title, deps)
-			}
-			fmt.Printf("\n  Progress: %.0f%%\n", plan.Progress())
-		}
 	}
 
 	// Show tracker info

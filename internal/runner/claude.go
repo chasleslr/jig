@@ -83,9 +83,6 @@ func (r *ClaudeRunner) Prepare(ctx context.Context, opts *PrepareOpts) error {
 			"created_at": opts.Plan.Created,
 			"updated_at": opts.Plan.Updated,
 		}
-		if opts.Phase != nil {
-			issueMeta["current_phase"] = opts.Phase.ID
-		}
 		metaData, err := json.MarshalIndent(issueMeta, "", "  ")
 		if err != nil {
 			return fmt.Errorf("failed to serialize issue metadata: %w", err)
@@ -275,9 +272,8 @@ You are implementing a planned feature. Follow the plan carefully.
 ## Guidelines
 
 1. **Follow the plan**: Implement exactly what's specified in the plan
-2. **One phase at a time**: Focus on the current phase's acceptance criteria
-3. **Test as you go**: Ensure each change works before moving on
-4. **Commit logically**: Make atomic commits that match the plan
+2. **Test as you go**: Ensure each change works before moving on
+3. **Commit logically**: Make atomic commits that match the plan
 
 `
 	if opts.Plan != nil {
@@ -285,26 +281,6 @@ You are implementing a planned feature. Follow the plan carefully.
 
 		if opts.Plan.ProposedSolution != "" {
 			content += fmt.Sprintf("### Proposed Solution\n%s\n\n", opts.Plan.ProposedSolution)
-		}
-	}
-
-	if opts.Phase != nil {
-		content += fmt.Sprintf("## Current Phase: %s\n\n", opts.Phase.Title)
-
-		if opts.Phase.Description != "" {
-			content += fmt.Sprintf("### Description\n%s\n\n", opts.Phase.Description)
-		}
-
-		if len(opts.Phase.Acceptance) > 0 {
-			content += "### Acceptance Criteria\n"
-			for _, ac := range opts.Phase.Acceptance {
-				content += fmt.Sprintf("- [ ] %s\n", ac)
-			}
-			content += "\n"
-		}
-
-		if len(opts.Phase.DependsOn) > 0 {
-			content += fmt.Sprintf("### Dependencies\nThis phase depends on: %v\n\n", opts.Phase.DependsOn)
 		}
 	}
 

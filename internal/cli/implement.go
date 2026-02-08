@@ -18,7 +18,7 @@ import (
 
 var implementCmd = &cobra.Command{
 	Use:   "implement [ISSUE]",
-	Short: "Implement a plan or phase",
+	Short: "Implement a plan",
 	Long: `Set up a worktree and launch your coding tool to implement a plan.
 
 This command:
@@ -36,14 +36,12 @@ After your implementation session, use 'gh pr create' to open a PR.`,
 }
 
 var (
-	implPhase        string
 	implRunner       string
 	implNoLaunch     bool
 	implNoAutoAccept bool
 )
 
 func init() {
-	implementCmd.Flags().StringVarP(&implPhase, "phase", "p", "", "specific phase to implement")
 	implementCmd.Flags().StringVarP(&implRunner, "runner", "r", "", "coding tool to use (default from config)")
 	implementCmd.Flags().BoolVar(&implNoLaunch, "no-launch", false, "set up worktree but don't launch tool")
 	implementCmd.Flags().BoolVar(&implNoAutoAccept, "no-auto-accept", false, "disable automatic acceptance of file edits")
@@ -138,51 +136,6 @@ func runImplement(cmd *cobra.Command, args []string) error {
 		branchName = git.GenerateBranchName(issueID, p.Title)
 	}
 
-	// Check for specific phase
-	var selectedPhase *plan.Phase
-
-	// If no phase specified but plan has multiple phases, prompt for selection
-	if implPhase == "" && p != nil && len(p.Phases) > 1 && ui.IsInteractive() {
-		// Build options from available (non-blocked) phases
-		var options []ui.SelectOption
-		for _, ph := range p.Phases {
-			if !ph.IsBlocked(p.Phases) {
-				label := ph.Title
-				if ph.Status == "complete" {
-					label += " (completed)"
-				}
-				options = append(options, ui.SelectOption{
-					Label:       label,
-					Value:       ph.ID,
-					Description: fmt.Sprintf("Phase %s", ph.ID),
-				})
-			}
-		}
-		if len(options) > 0 {
-			selected, err := ui.RunSelect("Select phase to implement:", options)
-			if err != nil {
-				return fmt.Errorf("failed to select phase: %w", err)
-			}
-			if selected != "" {
-				implPhase = selected
-			}
-		}
-	}
-
-	if implPhase != "" && p != nil {
-		selectedPhase = p.GetPhase(implPhase)
-		if selectedPhase == nil {
-			return fmt.Errorf("phase not found: %s", implPhase)
-		}
-		if selectedPhase.IsBlocked(p.Phases) {
-			return fmt.Errorf("phase %s is blocked by dependencies", implPhase)
-		}
-		// Update branch name for phase
-		if selectedPhase.IssueID != "" {
-			branchName = git.GenerateBranchName(selectedPhase.IssueID, selectedPhase.Title)
-		}
-	}
-
 	// Create or get worktree
 	var worktreePath string
 	if ui.IsInteractive() {
@@ -214,9 +167,6 @@ func runImplement(cmd *cobra.Command, args []string) error {
 	}
 	if p != nil {
 		wtInfo.PlanID = p.ID
-	}
-	if selectedPhase != nil {
-		wtInfo.PhaseID = selectedPhase.ID
 	}
 	if err := state.DefaultWorktreeState.Track(wtInfo); err != nil {
 		printWarning(fmt.Sprintf("Could not track worktree: %v", err))
@@ -257,7 +207,6 @@ func runImplement(cmd *cobra.Command, args []string) error {
 	// Prepare the runner context (writes plan to .jig/plan.md)
 	prepOpts := &runner.PrepareOpts{
 		Plan:        p,
-		Phase:       selectedPhase,
 		WorktreeDir: worktreePath,
 		PromptType:  runner.PromptTypeImplement,
 	}

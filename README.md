@@ -91,7 +91,7 @@ Validates the PR is ready and merges it.
 │                         jig CLI                                 │
 ├─────────────────────────────────────────────────────────────────┤
 │  1. Manage plans (create, review, amend)                        │
-│  2. Sync with Linear (issues, sub-issues, status)               │
+│  2. Sync with Linear (issues, status)                           │
 │  3. Manage worktrees (create, checkout, clean)                  │
 │  4. Prepare context (plan, prompts, codebase info)              │
 │  5. Launch external tool in current shell → jig exits          │
@@ -155,15 +155,6 @@ id: ENG-123
 title: Add user authentication
 status: draft
 author: charles
-phases:
-  - id: phase-1
-    title: Backend auth service
-    status: pending
-    depends_on: []
-  - id: phase-2
-    title: Frontend login flow
-    status: pending
-    depends_on: [phase-1]
 ---
 
 # Add User Authentication
@@ -176,11 +167,14 @@ phases:
 
 [Approach]
 
-## Phases
+## Implementation Details
 
-### Phase 1: Backend Auth Service
+[Specific implementation approach]
 
-...
+## Acceptance Criteria
+
+- [ ] Criterion 1
+- [ ] Criterion 2
 ```
 
 ## License

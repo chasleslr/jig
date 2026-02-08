@@ -29,7 +29,6 @@ const (
 // Vars contains variables for template rendering
 type Vars struct {
 	Plan         *plan.Plan
-	Phase        *plan.Phase
 	IssueContext string
 	PRComments   []string
 	PRNumber     string
@@ -160,23 +159,6 @@ func templateFuncs() template.FuncMap {
 				result += item
 			}
 			return result
-		},
-		"hasPhases": func(p *plan.Plan) bool {
-			return p != nil && len(p.Phases) > 0
-		},
-		"phaseStatus": func(status plan.PhaseStatus) string {
-			switch status {
-			case plan.PhaseStatusPending:
-				return "⬜ Pending"
-			case plan.PhaseStatusInProgress:
-				return "🔄 In Progress"
-			case plan.PhaseStatusComplete:
-				return "✅ Complete"
-			case plan.PhaseStatusBlocked:
-				return "🚫 Blocked"
-			default:
-				return string(status)
-			}
 		},
 	}
 }

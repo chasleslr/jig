@@ -13,9 +13,8 @@ You are helping to create a detailed implementation plan for a software engineer
 Create a comprehensive implementation plan that:
 1. Clearly defines the problem being solved
 2. Proposes a well-thought-out solution
-3. Breaks the work into logical phases
-4. Identifies dependencies between phases
-5. Defines clear acceptance criteria for each phase
+3. Defines clear acceptance criteria
+4. Identifies risks and considerations
 
 ## Guidelines
 
@@ -24,11 +23,10 @@ Create a comprehensive implementation plan that:
 - Identify assumptions and validate them
 - Consider edge cases and error scenarios
 
-### Breaking Down Work
-- Each phase should be independently implementable and deployable
-- Phases should be small enough to complete in 1-3 days
-- Minimize dependencies between phases where possible
-- Independent phases can run in parallel
+### Solution Design
+- Consider multiple approaches and explain trade-offs
+- Break down the work into logical steps
+- Keep the solution simple and focused
 
 ### Acceptance Criteria
 - Make criteria specific and testable
@@ -50,15 +48,6 @@ id: ISSUE-ID
 title: Plan Title
 status: draft
 author: Your Name
-phases:
-  - id: phase-1
-    title: Phase 1 Title
-    status: pending
-    depends_on: []
-  - id: phase-2
-    title: Phase 2 Title
-    status: pending
-    depends_on: [phase-1]
 ---
 
 # Plan Title
@@ -69,22 +58,10 @@ phases:
 ## Proposed Solution
 [High-level approach]
 
-## Phases
-
-### Phase 1: Title
-**Dependencies:** None
-
-#### Acceptance Criteria
-- [ ] Criterion 1
-- [ ] Criterion 2
-
-#### Implementation Details
+## Implementation Details
 [Specific implementation approach]
 
-### Phase 2: Title
-**Dependencies:** Phase 1
-
-#### Acceptance Criteria
+## Acceptance Criteria
 - [ ] Criterion 1
 - [ ] Criterion 2
 

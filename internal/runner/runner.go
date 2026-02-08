@@ -22,7 +22,6 @@ const (
 // PrepareOpts contains options for preparing the execution context
 type PrepareOpts struct {
 	Plan         *plan.Plan
-	Phase        *plan.Phase
 	WorktreeDir  string
 	PromptType   PromptType
 	PlanGoal     string            // User's description of what they want to plan

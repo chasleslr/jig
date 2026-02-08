@@ -1,8 +1,6 @@
 package ui
 
 import (
-	"fmt"
-
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/charleslr/jig/internal/plan"
@@ -12,9 +10,8 @@ import (
 func PlanTableColumns() []TableColumn {
 	return []TableColumn{
 		{Title: "ID", Width: 18},
-		{Title: "Title", Width: 35},
+		{Title: "Title", Width: 40},
 		{Title: "Status", Width: 12},
-		{Title: "Phases", Width: 8},
 	}
 }
 
@@ -25,18 +22,11 @@ func PlanToTableRow(p *plan.Plan) TableRow {
 		status = "draft"
 	}
 
-	phases := fmt.Sprintf("%d", len(p.Phases))
-	if len(p.Phases) > 0 {
-		completed := len(p.GetCompletedPhases())
-		phases = fmt.Sprintf("%d/%d", completed, len(p.Phases))
-	}
-
 	return TableRow{
 		Cells: []string{
 			p.ID,
 			p.Title,
 			status,
-			phases,
 		},
 		Value: p,
 	}

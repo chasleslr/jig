@@ -45,51 +45,6 @@ This is the problem.
 This is the solution.`,
 		},
 		{
-			name: "frontmatter with phases",
-			rawContent: `---
-id: test-plan
-title: Test Plan
-status: draft
-author: testuser
-phases:
-    - id: phase-1
-      title: Phase 1
-      status: pending
----
-
-# Test Plan
-
-## Problem Statement
-
-Problem here.
-
-## Proposed Solution
-
-Solution here.
-
-## Phases
-
-### Phase 1
-
-Details about phase 1.
-`,
-			want: `# Test Plan
-
-## Problem Statement
-
-Problem here.
-
-## Proposed Solution
-
-Solution here.
-
-## Phases
-
-### Phase 1
-
-Details about phase 1.`,
-		},
-		{
 			name:       "no frontmatter",
 			rawContent: `# Just Markdown
 
@@ -262,24 +217,6 @@ func TestPlanViewModelRenderHeader(t *testing.T) {
 				"DRAFT",
 			},
 		},
-		{
-			name: "header with progress bar",
-			plan: &plan.Plan{
-				ID:     "test-plan",
-				Title:  "Test Plan",
-				Status: plan.StatusInProgress,
-				Author: "testuser",
-				Phases: []*plan.Phase{
-					{ID: "phase-1", Title: "Phase 1", Status: plan.PhaseStatusComplete},
-					{ID: "phase-2", Title: "Phase 2", Status: plan.PhaseStatusPending},
-				},
-			},
-			wantContains: []string{
-				"Test Plan",
-				"Progress:",
-				"50%",
-			},
-		},
 	}
 
 	for _, tt := range tests {
@@ -373,28 +310,14 @@ func TestPlanViewModelHeaderHeight(t *testing.T) {
 		wantHeight int
 	}{
 		{
-			name: "no phases",
+			name: "basic plan",
 			plan: &plan.Plan{
 				ID:     "test-plan",
 				Title:  "Test Plan",
 				Status: plan.StatusDraft,
 				Author: "testuser",
-				Phases: []*plan.Phase{},
 			},
 			wantHeight: 4, // title + separator + blank + status
-		},
-		{
-			name: "with phases",
-			plan: &plan.Plan{
-				ID:     "test-plan",
-				Title:  "Test Plan",
-				Status: plan.StatusDraft,
-				Author: "testuser",
-				Phases: []*plan.Phase{
-					{ID: "phase-1", Title: "Phase 1", Status: plan.PhaseStatusPending},
-				},
-			},
-			wantHeight: 6, // title + separator + blank + status + progress + blank
 		},
 	}
 
@@ -450,7 +373,7 @@ func TestRenderPlanSummary(t *testing.T) {
 		wantContains []string
 	}{
 		{
-			name: "basic plan without phases",
+			name: "basic plan",
 			plan: &plan.Plan{
 				ID:     "test-plan",
 				Title:  "Test Plan Title",
@@ -460,66 +383,6 @@ func TestRenderPlanSummary(t *testing.T) {
 			wantContains: []string{
 				"Plan: Test Plan Title",
 				"Status: draft",
-			},
-		},
-		{
-			name: "plan with phases shows progress",
-			plan: &plan.Plan{
-				ID:     "test-plan",
-				Title:  "Test Plan",
-				Status: plan.StatusInProgress,
-				Author: "testuser",
-				Phases: []*plan.Phase{
-					{ID: "phase-1", Title: "Phase 1", Status: plan.PhaseStatusComplete},
-					{ID: "phase-2", Title: "Phase 2", Status: plan.PhaseStatusComplete},
-					{ID: "phase-3", Title: "Phase 3", Status: plan.PhaseStatusPending},
-					{ID: "phase-4", Title: "Phase 4", Status: plan.PhaseStatusPending},
-				},
-			},
-			wantContains: []string{
-				"Plan: Test Plan",
-				"Status: in-progress",
-				"Progress: 50%",
-				"2/4 phases",
-			},
-		},
-		{
-			name: "plan with all phases complete",
-			plan: &plan.Plan{
-				ID:     "test-plan",
-				Title:  "Completed Plan",
-				Status: plan.StatusComplete,
-				Author: "testuser",
-				Phases: []*plan.Phase{
-					{ID: "phase-1", Title: "Phase 1", Status: plan.PhaseStatusComplete},
-					{ID: "phase-2", Title: "Phase 2", Status: plan.PhaseStatusComplete},
-				},
-			},
-			wantContains: []string{
-				"Plan: Completed Plan",
-				"Status: complete",
-				"Progress: 100%",
-				"2/2 phases",
-			},
-		},
-		{
-			name: "plan with no phases complete",
-			plan: &plan.Plan{
-				ID:     "test-plan",
-				Title:  "New Plan",
-				Status: plan.StatusApproved,
-				Author: "testuser",
-				Phases: []*plan.Phase{
-					{ID: "phase-1", Title: "Phase 1", Status: plan.PhaseStatusPending},
-					{ID: "phase-2", Title: "Phase 2", Status: plan.PhaseStatusPending},
-					{ID: "phase-3", Title: "Phase 3", Status: plan.PhaseStatusPending},
-				},
-			},
-			wantContains: []string{
-				"Plan: New Plan",
-				"Status: approved",
-				"Progress: 0%",
-				"0/3 phases",
 			},
 		},
 	}
@@ -555,31 +418,6 @@ func TestFormatPlanStatus(t *testing.T) {
 			got := formatPlanStatus(tt.status)
 			if !strings.Contains(got, tt.want) {
 				t.Errorf("formatPlanStatus(%s) should contain %q, got %q", tt.status, tt.want, got)
-			}
-		})
-	}
-}
-
-func TestRenderProgressBar(t *testing.T) {
-	tests := []struct {
-		name    string
-		percent float64
-		width   int
-	}{
-		{"0 percent", 0, 10},
-		{"50 percent", 50, 10},
-		{"100 percent", 100, 10},
-		{"25 percent", 25, 20},
-		{"75 percent", 75, 20},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := renderProgressBar(tt.percent, tt.width)
-			// The progress bar contains filled (█) and empty (░) characters
-			// Just verify it returns something non-empty
-			if got == "" {
-				t.Error("renderProgressBar() should return non-empty string")
 			}
 		})
 	}

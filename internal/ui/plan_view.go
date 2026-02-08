@@ -110,14 +110,10 @@ func (m PlanViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // headerHeight returns the height of the fixed header
 func (m PlanViewModel) headerHeight() int {
-	lines := 4 // title + separator + blank + status line
-	if len(m.plan.Phases) > 0 {
-		lines += 2 // progress line + blank
-	}
-	return lines
+	return 4 // title + separator + blank + status line
 }
 
-// renderHeader renders the fixed header (title, status, progress)
+// renderHeader renders the fixed header (title, status)
 func (m PlanViewModel) renderHeader() string {
 	var b strings.Builder
 
@@ -131,15 +127,6 @@ func (m PlanViewModel) renderHeader() string {
 	b.WriteString(sectionStyle.Render("Status: "))
 	b.WriteString(formatPlanStatus(m.plan.Status))
 	b.WriteString("\n")
-
-	// Progress
-	if len(m.plan.Phases) > 0 {
-		progress := m.plan.Progress()
-		b.WriteString(sectionStyle.Render("Progress: "))
-		b.WriteString(renderProgressBar(progress, 30))
-		b.WriteString(fmt.Sprintf(" %.0f%%", progress))
-		b.WriteString("\n")
-	}
 
 	return b.String()
 }
@@ -203,14 +190,6 @@ func formatPlanStatus(status plan.Status) string {
 	}
 }
 
-func renderProgressBar(percent float64, width int) string {
-	filled := int(percent / 100 * float64(width))
-	empty := width - filled
-
-	bar := strings.Repeat("█", filled) + strings.Repeat("░", empty)
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render(bar)
-}
-
 // extractMarkdownBody extracts the markdown body from raw content (after frontmatter)
 func extractMarkdownBody(rawContent string) string {
 	// Look for the closing frontmatter delimiter "---"
@@ -249,13 +228,6 @@ func RenderPlanSummary(p *plan.Plan) string {
 
 	b.WriteString(fmt.Sprintf("Plan: %s\n", p.Title))
 	b.WriteString(fmt.Sprintf("Status: %s\n", p.Status))
-
-	if len(p.Phases) > 0 {
-		b.WriteString(fmt.Sprintf("Progress: %.0f%% (%d/%d phases)\n",
-			p.Progress(),
-			len(p.GetCompletedPhases()),
-			len(p.Phases)))
-	}
 
 	return b.String()
 }

@@ -74,13 +74,9 @@ type Tracker interface {
 	GetIssue(ctx context.Context, id string) (*Issue, error)
 	SearchIssues(ctx context.Context, query string) ([]*Issue, error)
 
-	// Sub-issues for phases
+	// Sub-issues
 	CreateSubIssue(ctx context.Context, parentID string, issue *Issue) (*Issue, error)
 	GetSubIssues(ctx context.Context, parentID string) ([]*Issue, error)
-
-	// Blocking relationships
-	SetBlocking(ctx context.Context, blockerID, blockedID string) error
-	GetBlockedBy(ctx context.Context, issueID string) ([]*Issue, error)
 
 	// Comments for Q&A and updates
 	AddComment(ctx context.Context, issueID string, body string) (*Comment, error)
