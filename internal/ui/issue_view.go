@@ -161,6 +161,30 @@ func ShowIssue(issue *tracker.Issue) error {
 	return err
 }
 
+// wrapText wraps text to the specified width
+func wrapText(text string, width int) string {
+	var result strings.Builder
+	var line strings.Builder
+
+	words := strings.Fields(text)
+	for _, word := range words {
+		if line.Len()+len(word)+1 > width {
+			result.WriteString(line.String())
+			result.WriteString("\n")
+			line.Reset()
+		}
+		if line.Len() > 0 {
+			line.WriteString(" ")
+		}
+		line.WriteString(word)
+	}
+	if line.Len() > 0 {
+		result.WriteString(line.String())
+	}
+
+	return result.String()
+}
+
 // RenderIssueContext returns a formatted string of the issue context
 // suitable for display in a non-interactive context
 func RenderIssueContext(issue *tracker.Issue) string {
