@@ -252,3 +252,67 @@ func TestGetPlanMarkdownNotFound(t *testing.T) {
 		t.Errorf("GetPlanMarkdown() should return empty string for non-existent plan, got %q", content)
 	}
 }
+
+func TestNewCacheWithDir(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-newwithdir-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create cache directories
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	// Create cache with custom directory
+	cache := NewCacheWithDir(tmpDir)
+	if cache == nil {
+		t.Fatal("NewCacheWithDir() returned nil")
+	}
+
+	// Verify we can use the cache
+	rawContent := `---
+id: test-custom-dir
+title: Test Custom Dir
+status: draft
+author: testuser
+---
+
+# Test Custom Dir
+
+## Problem Statement
+
+Problem.
+
+## Proposed Solution
+
+Solution.
+`
+	p := &plan.Plan{
+		ID:         "test-custom-dir",
+		Title:      "Test Custom Dir",
+		Status:     plan.StatusDraft,
+		Author:     "testuser",
+		RawContent: rawContent,
+	}
+
+	// Save should work
+	if err := cache.SavePlan(p); err != nil {
+		t.Fatalf("SavePlan() error = %v", err)
+	}
+
+	// Get should work
+	retrieved, err := cache.GetPlan("test-custom-dir")
+	if err != nil {
+		t.Fatalf("GetPlan() error = %v", err)
+	}
+	if retrieved == nil {
+		t.Fatal("GetPlan() returned nil")
+	}
+	if retrieved.Title != "Test Custom Dir" {
+		t.Errorf("retrieved.Title = %q, want %q", retrieved.Title, "Test Custom Dir")
+	}
+}

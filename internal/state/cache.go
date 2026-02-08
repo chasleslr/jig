@@ -42,6 +42,11 @@ func NewCache() (*Cache, error) {
 	return &Cache{dir: cacheDir}, nil
 }
 
+// NewCacheWithDir creates a cache instance with a custom directory (for testing)
+func NewCacheWithDir(dir string) *Cache {
+	return &Cache{dir: dir}
+}
+
 // SavePlan caches a plan locally
 func (c *Cache) SavePlan(p *plan.Plan) error {
 	if p.ID == "" {

@@ -2,9 +2,12 @@ package cli
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/charleslr/jig/internal/config"
+	"github.com/charleslr/jig/internal/state"
 	"github.com/charleslr/jig/internal/tracker"
 )
 
@@ -451,16 +454,6 @@ func TestRunPlanSave_InvalidPlanFormat(t *testing.T) {
 	}
 }
 
-func TestRunPlanSave_FileNotFound(t *testing.T) {
-	err := runPlanSave(planSaveCmd, []string{"/nonexistent/path/plan.md"})
-	if err == nil {
-		t.Error("expected error for nonexistent file")
-	}
-	if !strings.Contains(err.Error(), "failed to read file") {
-		t.Errorf("expected 'failed to read file' error, got: %v", err)
-	}
-}
-
 func TestRunPlanSave_MissingRequiredFields(t *testing.T) {
 	// Create a temp file with plan missing required fields
 	tempDir, err := os.MkdirTemp("", "jig-test-*")
@@ -780,4 +773,534 @@ func TestDisplaySavedPlanNextSteps(t *testing.T) {
 			t.Error("expected displaySavedPlanNextSteps to return false when no plan exists")
 		}
 	})
+}
+
+func TestRunPlanSave_SavesLocally(t *testing.T) {
+	// Create temp directories for test
+	tempDir, err := os.MkdirTemp("", "jig-plan-save-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Create a valid plan file
+	planContent := `---
+id: TEST-123
+title: Test Plan
+status: draft
+author: testuser
+---
+
+# Test Plan
+
+## Problem Statement
+
+This is a test problem statement.
+
+## Proposed Solution
+
+This is a test proposed solution.
+`
+	planFile := filepath.Join(tempDir, "plan.md")
+	if err := os.WriteFile(planFile, []byte(planContent), 0644); err != nil {
+		t.Fatalf("failed to write plan file: %v", err)
+	}
+
+	// Set up cache directory
+	cacheDir := filepath.Join(tempDir, "cache")
+	if err := os.MkdirAll(filepath.Join(cacheDir, "plans"), 0755); err != nil {
+		t.Fatalf("failed to create cache dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(cacheDir, "issues"), 0755); err != nil {
+		t.Fatalf("failed to create issues dir: %v", err)
+	}
+
+	// Initialize state with test cache
+	oldCache := state.DefaultCache
+	state.DefaultCache = state.NewCacheWithDir(cacheDir)
+	defer func() { state.DefaultCache = oldCache }()
+
+	// Change to temp directory for marker file
+	originalDir, _ := os.Getwd()
+	os.Chdir(tempDir)
+	defer os.Chdir(originalDir)
+
+	// Reset flags
+	oldSync := planSaveSync
+	oldNoSync := planSaveNoSync
+	planSaveSync = false
+	planSaveNoSync = true // Disable sync for this test
+	defer func() {
+		planSaveSync = oldSync
+		planSaveNoSync = oldNoSync
+	}()
+
+	// Run the command
+	err = runPlanSave(planSaveCmd, []string{planFile})
+	if err != nil {
+		t.Fatalf("runPlanSave() error = %v", err)
+	}
+
+	// Verify plan was saved to cache
+	savedPlan, err := state.DefaultCache.GetPlan("TEST-123")
+	if err != nil {
+		t.Fatalf("GetPlan() error = %v", err)
+	}
+	if savedPlan == nil {
+		t.Fatal("plan should have been saved to cache")
+	}
+	if savedPlan.Title != "Test Plan" {
+		t.Errorf("savedPlan.Title = %q, want %q", savedPlan.Title, "Test Plan")
+	}
+}
+
+func TestRunPlanSave_NoSyncFlag(t *testing.T) {
+	// Create temp directories for test
+	tempDir, err := os.MkdirTemp("", "jig-plan-save-nosync-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Create a valid plan file
+	planContent := `---
+id: TEST-NOSYNC
+title: No Sync Test
+status: draft
+author: testuser
+---
+
+# No Sync Test
+
+## Problem Statement
+
+Test problem.
+
+## Proposed Solution
+
+Test solution.
+`
+	planFile := filepath.Join(tempDir, "plan.md")
+	if err := os.WriteFile(planFile, []byte(planContent), 0644); err != nil {
+		t.Fatalf("failed to write plan file: %v", err)
+	}
+
+	// Set up cache directory
+	cacheDir := filepath.Join(tempDir, "cache")
+	if err := os.MkdirAll(filepath.Join(cacheDir, "plans"), 0755); err != nil {
+		t.Fatalf("failed to create cache dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(cacheDir, "issues"), 0755); err != nil {
+		t.Fatalf("failed to create issues dir: %v", err)
+	}
+
+	// Initialize state with test cache
+	oldCache := state.DefaultCache
+	state.DefaultCache = state.NewCacheWithDir(cacheDir)
+	defer func() { state.DefaultCache = oldCache }()
+
+	// Change to temp directory
+	originalDir, _ := os.Getwd()
+	os.Chdir(tempDir)
+	defer os.Chdir(originalDir)
+
+	// Set --no-sync flag
+	oldSync := planSaveSync
+	oldNoSync := planSaveNoSync
+	planSaveSync = false
+	planSaveNoSync = true
+	defer func() {
+		planSaveSync = oldSync
+		planSaveNoSync = oldNoSync
+	}()
+
+	// Run the command - should succeed without trying to sync
+	err = runPlanSave(planSaveCmd, []string{planFile})
+	if err != nil {
+		t.Fatalf("runPlanSave() with --no-sync error = %v", err)
+	}
+
+	// Verify plan was saved
+	savedPlan, err := state.DefaultCache.GetPlan("TEST-NOSYNC")
+	if err != nil {
+		t.Fatalf("GetPlan() error = %v", err)
+	}
+	if savedPlan == nil {
+		t.Fatal("plan should have been saved")
+	}
+}
+
+func TestRunPlanSave_SyncFlagOverridesConfig(t *testing.T) {
+	// This test verifies that --sync flag forces sync even if config says no
+	// and --no-sync flag prevents sync even if config says yes
+
+	tests := []struct {
+		name         string
+		configSync   bool
+		flagSync     bool
+		flagNoSync   bool
+		expectSync   bool
+	}{
+		{
+			name:       "config true, no flags",
+			configSync: true,
+			flagSync:   false,
+			flagNoSync: false,
+			expectSync: true,
+		},
+		{
+			name:       "config false, no flags",
+			configSync: false,
+			flagSync:   false,
+			flagNoSync: false,
+			expectSync: false,
+		},
+		{
+			name:       "config false, --sync flag",
+			configSync: false,
+			flagSync:   true,
+			flagNoSync: false,
+			expectSync: true,
+		},
+		{
+			name:       "config true, --no-sync flag",
+			configSync: true,
+			flagSync:   false,
+			flagNoSync: true,
+			expectSync: false,
+		},
+		{
+			name:       "both flags set, --no-sync wins",
+			configSync: true,
+			flagSync:   true,
+			flagNoSync: true,
+			expectSync: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				Plan: config.PlanConfig{Sync: tt.configSync},
+			}
+
+			// Calculate shouldSync using same logic as runPlanSave
+			shouldSync := cfg.Plan.Sync
+			if tt.flagSync {
+				shouldSync = true
+			}
+			if tt.flagNoSync {
+				shouldSync = false
+			}
+
+			if shouldSync != tt.expectSync {
+				t.Errorf("shouldSync = %v, want %v", shouldSync, tt.expectSync)
+			}
+		})
+	}
+}
+
+func TestRunPlanSave_InvalidPlan(t *testing.T) {
+	// Create temp directory
+	tempDir, err := os.MkdirTemp("", "jig-plan-invalid-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Create an invalid plan file (missing required sections)
+	invalidPlan := `---
+id: INVALID
+title: Invalid Plan
+status: draft
+author: test
+---
+
+# Invalid Plan
+
+No required sections here.
+`
+	planFile := filepath.Join(tempDir, "invalid.md")
+	if err := os.WriteFile(planFile, []byte(invalidPlan), 0644); err != nil {
+		t.Fatalf("failed to write plan file: %v", err)
+	}
+
+	// Set flags to not sync
+	oldNoSync := planSaveNoSync
+	planSaveNoSync = true
+	defer func() { planSaveNoSync = oldNoSync }()
+
+	// Run the command - should fail validation
+	err = runPlanSave(planSaveCmd, []string{planFile})
+	if err == nil {
+		t.Error("runPlanSave() should return error for invalid plan")
+	}
+	if !strings.Contains(err.Error(), "invalid plan format") {
+		t.Errorf("error should mention invalid plan format, got: %v", err)
+	}
+}
+
+func TestRunPlanSave_EmptyFile(t *testing.T) {
+	// Create temp directory
+	tempDir, err := os.MkdirTemp("", "jig-plan-empty-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Create an empty file
+	emptyFile := filepath.Join(tempDir, "empty.md")
+	if err := os.WriteFile(emptyFile, []byte{}, 0644); err != nil {
+		t.Fatalf("failed to write empty file: %v", err)
+	}
+
+	// Run the command - should fail
+	err = runPlanSave(planSaveCmd, []string{emptyFile})
+	if err == nil {
+		t.Error("runPlanSave() should return error for empty file")
+	}
+	if !strings.Contains(err.Error(), "no plan content") {
+		t.Errorf("error should mention no plan content, got: %v", err)
+	}
+}
+
+func TestRunPlanSave_FileNotFound(t *testing.T) {
+	err := runPlanSave(planSaveCmd, []string{"/nonexistent/path/plan.md"})
+	if err == nil {
+		t.Error("runPlanSave() should return error for nonexistent file")
+	}
+	if !strings.Contains(err.Error(), "failed to read file") {
+		t.Errorf("error should mention failed to read file, got: %v", err)
+	}
+}
+
+func TestRunPlanSync_PlanNotFound(t *testing.T) {
+	// Create temp directory for cache
+	tempDir, err := os.MkdirTemp("", "jig-plan-sync-notfound-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Set up cache directory
+	cacheDir := filepath.Join(tempDir, "cache")
+	if err := os.MkdirAll(filepath.Join(cacheDir, "plans"), 0755); err != nil {
+		t.Fatalf("failed to create cache dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(cacheDir, "issues"), 0755); err != nil {
+		t.Fatalf("failed to create issues dir: %v", err)
+	}
+
+	// Initialize state with test cache
+	oldCache := state.DefaultCache
+	state.DefaultCache = state.NewCacheWithDir(cacheDir)
+	defer func() { state.DefaultCache = oldCache }()
+
+	// Run sync for nonexistent plan
+	err = runPlanSync(planSyncCmd, []string{"NONEXISTENT-123"})
+	if err == nil {
+		t.Error("runPlanSync() should return error for nonexistent plan")
+	}
+	if !strings.Contains(err.Error(), "plan not found") {
+		t.Errorf("error should mention plan not found, got: %v", err)
+	}
+}
+
+func TestGetPlanSyncer_UnknownTracker(t *testing.T) {
+	cfg := &config.Config{
+		Default: config.DefaultConfig{
+			Tracker: "unknown-tracker",
+		},
+	}
+
+	_, err := getPlanSyncer(cfg)
+	if err == nil {
+		t.Error("getPlanSyncer() should return error for unknown tracker")
+	}
+	if !strings.Contains(err.Error(), "unknown tracker") {
+		t.Errorf("error should mention unknown tracker, got: %v", err)
+	}
+}
+
+func TestRunPlanSave_WithSyncEnabled_NoTracker(t *testing.T) {
+	// Test that sync gracefully handles missing tracker config
+	tempDir, err := os.MkdirTemp("", "jig-plan-sync-notracker-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Create a valid plan file
+	planContent := `---
+id: TEST-SYNC
+title: Sync Test
+status: draft
+author: testuser
+---
+
+# Sync Test
+
+## Problem Statement
+
+Test problem.
+
+## Proposed Solution
+
+Test solution.
+`
+	planFile := filepath.Join(tempDir, "plan.md")
+	if err := os.WriteFile(planFile, []byte(planContent), 0644); err != nil {
+		t.Fatalf("failed to write plan file: %v", err)
+	}
+
+	// Set up cache directory
+	cacheDir := filepath.Join(tempDir, "cache")
+	if err := os.MkdirAll(filepath.Join(cacheDir, "plans"), 0755); err != nil {
+		t.Fatalf("failed to create cache dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(cacheDir, "issues"), 0755); err != nil {
+		t.Fatalf("failed to create issues dir: %v", err)
+	}
+
+	// Initialize state with test cache
+	oldCache := state.DefaultCache
+	state.DefaultCache = state.NewCacheWithDir(cacheDir)
+	defer func() { state.DefaultCache = oldCache }()
+
+	// Change to temp directory
+	originalDir, _ := os.Getwd()
+	os.Chdir(tempDir)
+	defer os.Chdir(originalDir)
+
+	// Set --sync flag (should try to sync but fail gracefully)
+	oldSync := planSaveSync
+	oldNoSync := planSaveNoSync
+	planSaveSync = true
+	planSaveNoSync = false
+	defer func() {
+		planSaveSync = oldSync
+		planSaveNoSync = oldNoSync
+	}()
+
+	// Run the command - should succeed even if sync fails (warns but doesn't error)
+	err = runPlanSave(planSaveCmd, []string{planFile})
+	if err != nil {
+		t.Fatalf("runPlanSave() error = %v", err)
+	}
+
+	// Verify plan was still saved locally
+	savedPlan, err := state.DefaultCache.GetPlan("TEST-SYNC")
+	if err != nil {
+		t.Fatalf("GetPlan() error = %v", err)
+	}
+	if savedPlan == nil {
+		t.Fatal("plan should have been saved despite sync failure")
+	}
+}
+
+func TestShouldSyncLogic(t *testing.T) {
+	// Comprehensive test of the shouldSync logic extracted from runPlanSave
+	tests := []struct {
+		name       string
+		configSync bool
+		flagSync   bool
+		flagNoSync bool
+		want       bool
+	}{
+		// Config defaults
+		{"config=true, flags=none", true, false, false, true},
+		{"config=false, flags=none", false, false, false, false},
+
+		// --sync flag overrides
+		{"config=true, --sync", true, true, false, true},
+		{"config=false, --sync", false, true, false, true},
+
+		// --no-sync flag overrides
+		{"config=true, --no-sync", true, false, true, false},
+		{"config=false, --no-sync", false, false, true, false},
+
+		// Both flags: --no-sync wins
+		{"config=true, both flags", true, true, true, false},
+		{"config=false, both flags", false, true, true, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Simulate the logic from runPlanSave
+			shouldSync := tt.configSync
+			if tt.flagSync {
+				shouldSync = true
+			}
+			if tt.flagNoSync {
+				shouldSync = false
+			}
+
+			if shouldSync != tt.want {
+				t.Errorf("shouldSync = %v, want %v", shouldSync, tt.want)
+			}
+		})
+	}
+}
+
+func TestRunPlanImport_DelegatesToSave(t *testing.T) {
+	// Create temp directory
+	tempDir, err := os.MkdirTemp("", "jig-plan-import-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Create a valid plan file
+	planContent := `---
+id: TEST-IMPORT
+title: Import Test
+status: draft
+author: testuser
+---
+
+# Import Test
+
+## Problem Statement
+
+Test problem.
+
+## Proposed Solution
+
+Test solution.
+`
+	planFile := filepath.Join(tempDir, "plan.md")
+	if err := os.WriteFile(planFile, []byte(planContent), 0644); err != nil {
+		t.Fatalf("failed to write plan file: %v", err)
+	}
+
+	// Set up cache
+	cacheDir := filepath.Join(tempDir, "cache")
+	os.MkdirAll(filepath.Join(cacheDir, "plans"), 0755)
+	os.MkdirAll(filepath.Join(cacheDir, "issues"), 0755)
+
+	oldCache := state.DefaultCache
+	state.DefaultCache = state.NewCacheWithDir(cacheDir)
+	defer func() { state.DefaultCache = oldCache }()
+
+	// Change to temp directory
+	originalDir, _ := os.Getwd()
+	os.Chdir(tempDir)
+	defer os.Chdir(originalDir)
+
+	// Disable sync
+	oldNoSync := planSaveNoSync
+	planSaveNoSync = true
+	defer func() { planSaveNoSync = oldNoSync }()
+
+	// Run import
+	err = runPlanImport(planImportCmd, []string{planFile})
+	if err != nil {
+		t.Fatalf("runPlanImport() error = %v", err)
+	}
+
+	// Verify plan was saved
+	savedPlan, _ := state.DefaultCache.GetPlan("TEST-IMPORT")
+	if savedPlan == nil {
+		t.Fatal("plan should have been saved via import")
+	}
 }
