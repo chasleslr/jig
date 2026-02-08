@@ -461,3 +461,229 @@ func TestPlanPromptModelViewContextQuit(t *testing.T) {
 		t.Errorf("expected state to be stateMenu after pressing q, got %v", m.state)
 	}
 }
+
+func TestPlanPromptModelMenuQuit(t *testing.T) {
+	issue := &tracker.Issue{
+		ID:         "abc123",
+		Identifier: "ENG-123",
+		Title:      "Menu Quit Test",
+	}
+
+	m := NewPlanPrompt(issue)
+
+	// Press q to quit from menu
+	newModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m = newModel.(PlanPromptModel)
+
+	if !m.quitting {
+		t.Error("expected quitting to be true after pressing q")
+	}
+	if m.result == nil {
+		t.Fatal("expected result to be set")
+	}
+	if m.result.Action != PlanPromptActionCancel {
+		t.Errorf("expected action to be Cancel, got %v", m.result.Action)
+	}
+	if cmd == nil {
+		t.Error("expected quit command to be returned")
+	}
+}
+
+func TestPlanPromptModelMenuNavigation(t *testing.T) {
+	issue := &tracker.Issue{
+		ID:         "abc123",
+		Identifier: "ENG-123",
+		Title:      "Navigation Test",
+	}
+
+	m := NewPlanPrompt(issue)
+
+	// Initial cursor should be 0
+	if m.cursor != 0 {
+		t.Errorf("expected initial cursor to be 0, got %d", m.cursor)
+	}
+
+	// Press down to move cursor
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = newModel.(PlanPromptModel)
+	if m.cursor != 1 {
+		t.Errorf("expected cursor to be 1 after down, got %d", m.cursor)
+	}
+
+	// Press j to move cursor down again
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = newModel.(PlanPromptModel)
+	if m.cursor != 2 {
+		t.Errorf("expected cursor to be 2 after j, got %d", m.cursor)
+	}
+
+	// Press down at bottom - should stay at 2
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = newModel.(PlanPromptModel)
+	if m.cursor != 2 {
+		t.Errorf("expected cursor to stay at 2, got %d", m.cursor)
+	}
+
+	// Press up to move cursor back
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = newModel.(PlanPromptModel)
+	if m.cursor != 1 {
+		t.Errorf("expected cursor to be 1 after up, got %d", m.cursor)
+	}
+
+	// Press k to move cursor up
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	m = newModel.(PlanPromptModel)
+	if m.cursor != 0 {
+		t.Errorf("expected cursor to be 0 after k, got %d", m.cursor)
+	}
+
+	// Press up at top - should stay at 0
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = newModel.(PlanPromptModel)
+	if m.cursor != 0 {
+		t.Errorf("expected cursor to stay at 0, got %d", m.cursor)
+	}
+}
+
+func TestPlanPromptModelStartPlanning(t *testing.T) {
+	issue := &tracker.Issue{
+		ID:         "abc123",
+		Identifier: "ENG-123",
+		Title:      "Start Planning Test",
+	}
+
+	m := NewPlanPrompt(issue)
+	m.instructions = "Test instructions"
+
+	// Cursor is at 0 (Start planning), press enter
+	newModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newModel.(PlanPromptModel)
+
+	if !m.quitting {
+		t.Error("expected quitting to be true")
+	}
+	if m.result == nil {
+		t.Fatal("expected result to be set")
+	}
+	if m.result.Action != PlanPromptActionStart {
+		t.Errorf("expected action to be Start, got %v", m.result.Action)
+	}
+	if m.result.Instructions != "Test instructions" {
+		t.Errorf("expected instructions to be preserved, got %q", m.result.Instructions)
+	}
+	if cmd == nil {
+		t.Error("expected quit command to be returned")
+	}
+}
+
+func TestPlanPromptModelStartPlanningWithSpace(t *testing.T) {
+	issue := &tracker.Issue{
+		ID:         "abc123",
+		Identifier: "ENG-123",
+		Title:      "Start Planning Space Test",
+	}
+
+	m := NewPlanPrompt(issue)
+
+	// Press space to select (same as enter)
+	newModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	m = newModel.(PlanPromptModel)
+
+	if !m.quitting {
+		t.Error("expected quitting to be true after space")
+	}
+	if m.result == nil {
+		t.Fatal("expected result to be set")
+	}
+	if m.result.Action != PlanPromptActionStart {
+		t.Errorf("expected action to be Start, got %v", m.result.Action)
+	}
+	if cmd == nil {
+		t.Error("expected quit command to be returned")
+	}
+}
+
+func TestPlanPromptModelViewContextWithCachedContent(t *testing.T) {
+	issue := &tracker.Issue{
+		ID:          "abc123",
+		Identifier:  "ENG-123",
+		Title:       "Cached Content Test",
+		Description: "Test description",
+		Status:      tracker.StatusTodo,
+	}
+
+	m := NewPlanPrompt(issue)
+
+	// Pre-cache the content
+	m.contextContent = "Pre-cached content for testing"
+
+	// Move to view context
+	m.cursor = 1
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newModel.(PlanPromptModel)
+
+	// Content should remain as pre-cached (not re-rendered)
+	if m.contextContent != "Pre-cached content for testing" {
+		t.Errorf("expected cached content to be preserved, got %q", m.contextContent)
+	}
+}
+
+func TestPlanPromptModelWindowSizeUpdate(t *testing.T) {
+	issue := &tracker.Issue{
+		ID:         "abc123",
+		Identifier: "ENG-123",
+		Title:      "Window Size Update Test",
+	}
+
+	m := NewPlanPrompt(issue)
+
+	// First window size to initialize
+	newModel, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = newModel.(PlanPromptModel)
+
+	if !m.contextReady {
+		t.Error("expected contextReady to be true")
+	}
+
+	// Update window size
+	newModel, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = newModel.(PlanPromptModel)
+
+	if m.width != 120 {
+		t.Errorf("expected width to be 120, got %d", m.width)
+	}
+	if m.height != 40 {
+		t.Errorf("expected height to be 40, got %d", m.height)
+	}
+}
+
+func TestPlanPromptModelWindowSizeInViewContext(t *testing.T) {
+	issue := &tracker.Issue{
+		ID:          "abc123",
+		Identifier:  "ENG-123",
+		Title:       "Window Size in Context Test",
+		Description: "Test description",
+		Status:      tracker.StatusTodo,
+	}
+
+	m := NewPlanPrompt(issue)
+
+	// Initialize viewport
+	newModel, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = newModel.(PlanPromptModel)
+
+	// Move to view context and cache content
+	m.cursor = 1
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newModel.(PlanPromptModel)
+
+	// Now send another window size message while in view context
+	newModel, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = newModel.(PlanPromptModel)
+
+	// Should update dimensions
+	if m.width != 100 {
+		t.Errorf("expected width to be 100, got %d", m.width)
+	}
+}

@@ -266,6 +266,55 @@ func TestRenderMarkdown(t *testing.T) {
 	}
 }
 
+func TestWrapText(t *testing.T) {
+	tests := []struct {
+		name     string
+		text     string
+		width    int
+		expected string
+	}{
+		{
+			name:     "zero width returns original",
+			text:     "Hello world",
+			width:    0,
+			expected: "Hello world",
+		},
+		{
+			name:     "negative width returns original",
+			text:     "Hello world",
+			width:    -1,
+			expected: "Hello world",
+		},
+		{
+			name:     "short text unchanged",
+			text:     "Hi",
+			width:    80,
+			expected: "Hi",
+		},
+		{
+			name:     "text wraps at width",
+			text:     "Hello world test",
+			width:    10,
+			expected: "Hello\nworld test",
+		},
+		{
+			name:     "preserves newlines",
+			text:     "Line 1\nLine 2",
+			width:    80,
+			expected: "Line 1\nLine 2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := wrapText(tt.text, tt.width)
+			if result != tt.expected {
+				t.Errorf("wrapText(%q, %d) = %q, want %q", tt.text, tt.width, result, tt.expected)
+			}
+		})
+	}
+}
+
 func TestFormatIssueStatus(t *testing.T) {
 	tests := []struct {
 		status   tracker.Status
