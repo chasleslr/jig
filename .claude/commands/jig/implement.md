@@ -160,13 +160,16 @@ When implementation is complete, provide a summary:
 2. **Files changed**: Overview of modified files
 3. **Tests**: Confirm tests are passing
 4. **Deviations**: Note any deviations from the original plan and why
-5. **Next steps**: Usually creating a PR
+5. **Next steps**: Verify acceptance criteria, then create PR
 
-### Step 7: Guide PR Creation
+### Step 7: Guide Verification and PR Creation
 
-Suggest the user create a PR:
+Recommend running verification before creating a PR:
 
 ```bash
+# Verify all acceptance criteria are met
+jig verify
+
 # Stage and commit any remaining changes
 git add -A
 git commit -m "feat: implement <feature-name>

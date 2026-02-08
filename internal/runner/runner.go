@@ -14,6 +14,7 @@ type PromptType string
 const (
 	PromptTypePlan           PromptType = "plan"
 	PromptTypeImplement      PromptType = "implement"
+	PromptTypeVerify         PromptType = "verify"
 	PromptTypeReview         PromptType = "review"
 	PromptTypeLeadReview     PromptType = "lead_review"
 	PromptTypeSecurityReview PromptType = "security_review"
