@@ -47,6 +47,11 @@ tasks:
     cmds:
       - golangci-lint run
 
+  lint:fix:
+    desc: Run linter and fix auto-fixable issues
+    cmds:
+      - golangci-lint run --fix
+
   fmt:
     desc: Format code
     cmds:
@@ -76,3 +81,11 @@ tasks:
       - task: vet
       - task: lint
       - task: test
+
+  setup:
+    desc: Set up development environment (install hooks)
+    cmds:
+      - lefthook install
+    preconditions:
+      - sh: command -v lefthook
+        msg: "lefthook is not installed. Install with: brew install lefthook"
