@@ -603,3 +603,181 @@ func TestPlanSaveCmd_Usage(t *testing.T) {
 		t.Error("expected planSaveCmd.Long to mention --session flag")
 	}
 }
+
+func TestRunPlanSave_WithSessionFlag(t *testing.T) {
+	// Create a temp directory for testing
+	tempDir, err := os.MkdirTemp("", "jig-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Change to temp directory
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current dir: %v", err)
+	}
+	defer os.Chdir(originalDir)
+
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("failed to change to temp dir: %v", err)
+	}
+
+	// Create a valid plan file
+	validPlan := `---
+id: SESSION-TEST-123
+title: Session Test Plan
+status: draft
+author: testuser
+phases:
+  - id: phase-1
+    title: Phase 1
+    status: pending
+---
+
+# Session Test Plan
+
+## Problem Statement
+
+Test problem.
+
+## Proposed Solution
+
+Test solution.
+
+## Phases
+
+### Phase 1
+
+Test phase.
+`
+	planFile := tempDir + "/session-plan.md"
+	os.WriteFile(planFile, []byte(validPlan), 0644)
+
+	// Set the session ID flag variable
+	originalSessionID := planSaveSessionID
+	planSaveSessionID = "test-session-12345"
+	defer func() { planSaveSessionID = originalSessionID }()
+
+	// Run the save command
+	err = runPlanSave(planSaveCmd, []string{planFile})
+	if err != nil {
+		t.Fatalf("runPlanSave failed: %v", err)
+	}
+
+	// Verify the session ID was written to the session directory
+	savedPlanID := readSavedPlanID("test-session-12345")
+	if savedPlanID != "SESSION-TEST-123" {
+		t.Errorf("expected saved plan ID 'SESSION-TEST-123', got '%s'", savedPlanID)
+	}
+}
+
+func TestRunPlanSave_WithoutSessionFlag(t *testing.T) {
+	// Create a temp directory for testing
+	tempDir, err := os.MkdirTemp("", "jig-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Change to temp directory
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current dir: %v", err)
+	}
+	defer os.Chdir(originalDir)
+
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("failed to change to temp dir: %v", err)
+	}
+
+	// Create a valid plan file
+	validPlan := `---
+id: NO-SESSION-TEST
+title: No Session Test Plan
+status: draft
+author: testuser
+phases:
+  - id: phase-1
+    title: Phase 1
+    status: pending
+---
+
+# No Session Test Plan
+
+## Problem Statement
+
+Test problem.
+
+## Proposed Solution
+
+Test solution.
+
+## Phases
+
+### Phase 1
+
+Test phase.
+`
+	planFile := tempDir + "/no-session-plan.md"
+	os.WriteFile(planFile, []byte(validPlan), 0644)
+
+	// Ensure session ID is empty
+	originalSessionID := planSaveSessionID
+	planSaveSessionID = ""
+	defer func() { planSaveSessionID = originalSessionID }()
+
+	// Run the save command
+	err = runPlanSave(planSaveCmd, []string{planFile})
+	if err != nil {
+		t.Fatalf("runPlanSave failed: %v", err)
+	}
+
+	// Verify no session directory was created for this test
+	// (readSavedPlanID should return empty for a non-existent session)
+	savedPlanID := readSavedPlanID("nonexistent-session-xyz")
+	if savedPlanID != "" {
+		t.Errorf("expected empty saved plan ID for nonexistent session, got '%s'", savedPlanID)
+	}
+}
+
+func TestDisplaySavedPlanNextSteps(t *testing.T) {
+	// Create a temp directory for testing
+	tempDir, err := os.MkdirTemp("", "jig-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Change to temp directory
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current dir: %v", err)
+	}
+	defer os.Chdir(originalDir)
+
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("failed to change to temp dir: %v", err)
+	}
+
+	t.Run("returns true when plan exists", func(t *testing.T) {
+		sessionID := "test-session-display"
+		planID := "DISPLAY-TEST-123"
+
+		// Write a saved plan ID
+		writeSavedPlanID(sessionID, planID)
+
+		// Test that displaySavedPlanNextSteps returns true
+		result := displaySavedPlanNextSteps(sessionID)
+		if !result {
+			t.Error("expected displaySavedPlanNextSteps to return true when plan exists")
+		}
+	})
+
+	t.Run("returns false when no plan exists", func(t *testing.T) {
+		result := displaySavedPlanNextSteps("nonexistent-session-xyz")
+		if result {
+			t.Error("expected displaySavedPlanNextSteps to return false when no plan exists")
+		}
+	})
+}

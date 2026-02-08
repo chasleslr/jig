@@ -222,6 +222,20 @@ func readSavedPlanID(sessionID string) string {
 	return strings.TrimSpace(string(data))
 }
 
+// displaySavedPlanNextSteps checks if a plan was saved during the session and displays next steps
+// Returns true if a plan was found and displayed, false otherwise
+func displaySavedPlanNextSteps(sessionID string) bool {
+	savedPlanID := readSavedPlanID(sessionID)
+	if savedPlanID == "" {
+		return false
+	}
+	printSuccess(fmt.Sprintf("Plan saved: %s", savedPlanID))
+	fmt.Printf("\nNext steps:\n")
+	fmt.Printf("  - View plan: jig plan show %s\n", savedPlanID)
+	fmt.Printf("  - Start implementation: jig implement %s\n", savedPlanID)
+	return true
+}
+
 func runPlanImport(cmd *cobra.Command, args []string) error {
 	// Just delegate to save with the file argument
 	return runPlanSave(cmd, args)
@@ -484,11 +498,7 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 
 	// Check if a plan was saved during the session by reading from the session directory
 	// This is more reliable than guessing based on cache contents
-	if savedPlanID := readSavedPlanID(sessionID); savedPlanID != "" {
-		printSuccess(fmt.Sprintf("Plan saved: %s", savedPlanID))
-		fmt.Printf("\nNext steps:\n")
-		fmt.Printf("  - View plan: jig plan show %s\n", savedPlanID)
-		fmt.Printf("  - Start implementation: jig implement %s\n", savedPlanID)
+	if displaySavedPlanNextSteps(sessionID) {
 		return nil
 	}
 
