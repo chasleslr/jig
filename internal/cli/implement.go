@@ -119,14 +119,21 @@ func runImplement(cmd *cobra.Command, args []string) error {
 
 	// Transition plan to in-progress if it's draft or approved
 	if p != nil && (p.Status == plan.StatusDraft || p.Status == plan.StatusApproved) {
-		if err := p.TransitionTo(plan.StatusInProgress); err != nil {
+		// Create tracker syncer if configured
+		var syncer state.TrackerSyncer
+		if cfg.Default.Tracker == "linear" {
+			syncer = getLinearSyncer(cfg)
+		}
+
+		// Use PlanStatusManager for atomic cache + tracker update
+		mgr := state.NewPlanStatusManager(state.DefaultCache, syncer)
+		result, err := mgr.StartProgress(ctx, p)
+		if err != nil {
 			printWarning(fmt.Sprintf("Could not transition plan to in-progress: %v", err))
 		} else {
-			if err := state.DefaultCache.SavePlan(p); err != nil {
-				printWarning(fmt.Sprintf("Could not save plan status: %v", err))
+			if result.TrackerError != nil {
+				printWarning(fmt.Sprintf("Could not sync status to tracker: %v", result.TrackerError))
 			}
-			// Sync status to tracker (non-blocking)
-			syncPlanStatusToTracker(ctx, cfg, p)
 		}
 	}
 
@@ -261,33 +268,24 @@ func createPlanFromIssue(issue *tracker.Issue) *plan.Plan {
 	return p
 }
 
-// syncPlanStatusToTracker syncs the plan status to the configured tracker
-// This is non-blocking - failures are logged as warnings but don't abort the operation
-func syncPlanStatusToTracker(ctx context.Context, cfg *config.Config, p *plan.Plan) {
-	if cfg.Default.Tracker != "linear" {
-		return // Only Linear is supported for now
-	}
-
+// getLinearSyncer creates a Linear client that implements TrackerSyncer.
+// Returns nil if Linear is not properly configured.
+func getLinearSyncer(cfg *config.Config) state.TrackerSyncer {
 	store, err := config.NewStore()
 	if err != nil {
-		printWarning(fmt.Sprintf("Could not sync status to tracker: %v", err))
-		return
+		return nil
 	}
 
 	apiKey, err := store.GetLinearAPIKey()
 	if err != nil {
-		printWarning(fmt.Sprintf("Could not sync status to tracker: %v", err))
-		return
+		return nil
 	}
 	if apiKey == "" {
 		apiKey = cfg.Linear.APIKey
 	}
 	if apiKey == "" {
-		return // No API key configured, skip sync
+		return nil
 	}
 
-	client := linear.NewClient(apiKey, cfg.Linear.TeamID, cfg.Linear.DefaultProject)
-	if err := client.SyncPlanStatus(ctx, p); err != nil {
-		printWarning(fmt.Sprintf("Could not sync status to tracker: %v", err))
-	}
+	return linear.NewClient(apiKey, cfg.Linear.TeamID, cfg.Linear.DefaultProject)
 }
