@@ -195,7 +195,10 @@ func IsBranchMerged(name string) (bool, error) {
 	}
 
 	for _, line := range strings.Split(string(output), "\n") {
-		branch := strings.TrimSpace(strings.TrimPrefix(line, "* "))
+		branch := strings.TrimSpace(line)
+		// Strip "* " (current branch) or "+ " (checked out in worktree) prefixes
+		branch = strings.TrimPrefix(branch, "* ")
+		branch = strings.TrimPrefix(branch, "+ ")
 		if branch == name {
 			return true, nil
 		}
