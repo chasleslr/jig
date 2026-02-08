@@ -335,20 +335,16 @@ func (m PlanPromptModel) viewContext() string {
 	b.WriteString(strings.Repeat("─", 60))
 	b.WriteString("\n\n")
 
-	if m.contextReady && m.contextContent != "" {
-		// Viewport with scrollable content
-		b.WriteString(m.contextViewport.View())
-	} else if m.contextContent != "" {
-		// Fallback for when viewport is not yet initialized
+	// Use cached content if available, otherwise render
+	if m.contextContent != "" {
 		b.WriteString(m.contextContent)
 	} else {
-		// Fallback - render now (shouldn't happen in normal flow)
 		b.WriteString(m.renderContextContent())
 	}
 
 	// Footer with help
 	b.WriteString("\n")
-	b.WriteString(unselectedStyle.Render("↑/↓ to scroll, q/esc to return to menu"))
+	b.WriteString(unselectedStyle.Render("q/esc to return to menu"))
 
 	return b.String()
 }
