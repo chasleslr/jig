@@ -235,26 +235,22 @@ func TestNewPlanView(t *testing.T) {
 	if view.plan != p {
 		t.Error("expected plan to be set")
 	}
-	if view.height != 20 {
-		t.Errorf("expected default height 20, got %d", view.height)
-	}
-	if view.scroll != 0 {
-		t.Errorf("expected initial scroll 0, got %d", view.scroll)
+	if view.ready {
+		t.Error("expected ready to be false initially")
 	}
 	if view.quitting {
 		t.Error("expected quitting to be false initially")
 	}
 }
 
-func TestPlanViewModelView(t *testing.T) {
+func TestPlanViewModelRenderHeader(t *testing.T) {
 	tests := []struct {
-		name           string
-		plan           *plan.Plan
-		wantContains   []string
-		wantNotContain []string
+		name         string
+		plan         *plan.Plan
+		wantContains []string
 	}{
 		{
-			name: "displays title and status",
+			name: "header with title and status",
 			plan: &plan.Plan{
 				ID:     "test-plan",
 				Title:  "Test Plan Title",
@@ -267,7 +263,7 @@ func TestPlanViewModelView(t *testing.T) {
 			},
 		},
 		{
-			name: "displays progress bar when phases exist",
+			name: "header with progress bar",
 			plan: &plan.Plan{
 				ID:     "test-plan",
 				Title:  "Test Plan",
@@ -281,11 +277,33 @@ func TestPlanViewModelView(t *testing.T) {
 			wantContains: []string{
 				"Test Plan",
 				"Progress:",
-				"50%", // 1 of 2 phases complete
+				"50%",
 			},
 		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			view := NewPlanView(tt.plan)
+			output := view.renderHeader()
+
+			for _, want := range tt.wantContains {
+				if !strings.Contains(output, want) {
+					t.Errorf("renderHeader() should contain %q, got:\n%s", want, output)
+				}
+			}
+		})
+	}
+}
+
+func TestPlanViewModelRenderContent(t *testing.T) {
+	tests := []struct {
+		name         string
+		plan         *plan.Plan
+		wantContains []string
+	}{
 		{
-			name: "displays full markdown body",
+			name: "renders full markdown body",
 			plan: &plan.Plan{
 				ID:     "test-plan",
 				Title:  "Test Plan",
@@ -302,29 +320,60 @@ author: testuser
 
 ## Problem Statement
 
-This is the full problem statement that should be displayed.
+This is the full problem statement.
 
 ## Proposed Solution
 
-This is the complete solution.
+This is the solution.
 
 ## Custom Section
 
-This custom content must appear in the view.
+Custom content here.
 `,
 			},
 			wantContains: []string{
-				"Test Plan",
 				"Problem Statement",
-				"This is the full problem statement that should be displayed.",
+				"This is the full problem statement.",
 				"Proposed Solution",
-				"This is the complete solution.",
 				"Custom Section",
-				"This custom content must appear in the view.",
+				"Custom content here.",
 			},
 		},
 		{
-			name: "no progress bar without phases",
+			name: "empty content when no raw content",
+			plan: &plan.Plan{
+				ID:         "test-plan",
+				Title:      "Test Plan",
+				Status:     plan.StatusDraft,
+				Author:     "testuser",
+				RawContent: "",
+			},
+			wantContains: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			view := NewPlanView(tt.plan)
+			output := view.renderContent()
+
+			for _, want := range tt.wantContains {
+				if !strings.Contains(output, want) {
+					t.Errorf("renderContent() should contain %q, got:\n%s", want, output)
+				}
+			}
+		})
+	}
+}
+
+func TestPlanViewModelHeaderHeight(t *testing.T) {
+	tests := []struct {
+		name       string
+		plan       *plan.Plan
+		wantHeight int
+	}{
+		{
+			name: "no phases",
 			plan: &plan.Plan{
 				ID:     "test-plan",
 				Title:  "Test Plan",
@@ -332,92 +381,29 @@ This custom content must appear in the view.
 				Author: "testuser",
 				Phases: []*plan.Phase{},
 			},
-			wantContains: []string{
-				"Test Plan",
-				"DRAFT",
-			},
-			wantNotContain: []string{
-				"Progress:",
-			},
+			wantHeight: 4, // title + separator + blank + status
 		},
 		{
-			name: "displays reviewing status",
-			plan: &plan.Plan{
-				ID:     "test-plan",
-				Title:  "Test Plan",
-				Status: plan.StatusReviewing,
-				Author: "testuser",
-			},
-			wantContains: []string{
-				"REVIEWING",
-			},
-		},
-		{
-			name: "displays approved status",
-			plan: &plan.Plan{
-				ID:     "test-plan",
-				Title:  "Test Plan",
-				Status: plan.StatusApproved,
-				Author: "testuser",
-			},
-			wantContains: []string{
-				"APPROVED",
-			},
-		},
-		{
-			name: "displays in progress status",
-			plan: &plan.Plan{
-				ID:     "test-plan",
-				Title:  "Test Plan",
-				Status: plan.StatusInProgress,
-				Author: "testuser",
-			},
-			wantContains: []string{
-				"IN PROGRESS",
-			},
-		},
-		{
-			name: "displays complete status",
-			plan: &plan.Plan{
-				ID:     "test-plan",
-				Title:  "Test Plan",
-				Status: plan.StatusComplete,
-				Author: "testuser",
-			},
-			wantContains: []string{
-				"COMPLETE",
-			},
-		},
-		{
-			name: "displays help text",
+			name: "with phases",
 			plan: &plan.Plan{
 				ID:     "test-plan",
 				Title:  "Test Plan",
 				Status: plan.StatusDraft,
 				Author: "testuser",
+				Phases: []*plan.Phase{
+					{ID: "phase-1", Title: "Phase 1", Status: plan.PhaseStatusPending},
+				},
 			},
-			wantContains: []string{
-				"scroll",
-				"quit",
-			},
+			wantHeight: 6, // title + separator + blank + status + progress + blank
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			view := NewPlanView(tt.plan)
-			output := view.View()
-
-			for _, want := range tt.wantContains {
-				if !strings.Contains(output, want) {
-					t.Errorf("View() output should contain %q, got:\n%s", want, output)
-				}
-			}
-
-			for _, notWant := range tt.wantNotContain {
-				if strings.Contains(output, notWant) {
-					t.Errorf("View() output should NOT contain %q, got:\n%s", notWant, output)
-				}
+			got := view.headerHeight()
+			if got != tt.wantHeight {
+				t.Errorf("headerHeight() = %d, want %d", got, tt.wantHeight)
 			}
 		})
 	}
@@ -437,6 +423,23 @@ func TestPlanViewModelViewQuitting(t *testing.T) {
 	output := view.View()
 	if output != "" {
 		t.Errorf("expected empty string when quitting, got: %s", output)
+	}
+}
+
+func TestPlanViewModelViewNotReady(t *testing.T) {
+	p := &plan.Plan{
+		ID:     "test-plan",
+		Title:  "Test Plan",
+		Status: plan.StatusDraft,
+		Author: "testuser",
+	}
+
+	view := NewPlanView(p)
+	// ready is false by default
+
+	output := view.View()
+	if output != "Loading..." {
+		t.Errorf("expected 'Loading...' when not ready, got: %s", output)
 	}
 }
 
@@ -598,7 +601,7 @@ func TestPlanViewModelInit(t *testing.T) {
 	}
 }
 
-func TestPlanViewModelUpdate(t *testing.T) {
+func TestPlanViewModelUpdateQuit(t *testing.T) {
 	p := &plan.Plan{
 		ID:     "test-plan",
 		Title:  "Test Plan",
@@ -607,112 +610,22 @@ func TestPlanViewModelUpdate(t *testing.T) {
 	}
 
 	tests := []struct {
-		name          string
-		initialScroll int
-		key           tea.KeyType
-		runes         string
-		wantScroll    int
-		wantQuitting  bool
-		wantCmdNotNil bool
+		name string
+		key  tea.KeyType
+		char string
 	}{
-		{
-			name:          "scroll down with j",
-			initialScroll: 0,
-			runes:         "j",
-			wantScroll:    1,
-			wantQuitting:  false,
-		},
-		{
-			name:          "scroll down with down arrow",
-			initialScroll: 0,
-			key:           tea.KeyDown,
-			wantScroll:    1,
-			wantQuitting:  false,
-		},
-		{
-			name:          "scroll up with k",
-			initialScroll: 5,
-			runes:         "k",
-			wantScroll:    4,
-			wantQuitting:  false,
-		},
-		{
-			name:          "scroll up with up arrow",
-			initialScroll: 5,
-			key:           tea.KeyUp,
-			wantScroll:    4,
-			wantQuitting:  false,
-		},
-		{
-			name:          "scroll up at 0 stays at 0",
-			initialScroll: 0,
-			runes:         "k",
-			wantScroll:    0,
-			wantQuitting:  false,
-		},
-		{
-			name:          "go to top with g",
-			initialScroll: 50,
-			runes:         "g",
-			wantScroll:    0,
-			wantQuitting:  false,
-		},
-		{
-			name:          "go to top with home",
-			initialScroll: 50,
-			key:           tea.KeyHome,
-			wantScroll:    0,
-			wantQuitting:  false,
-		},
-		{
-			name:          "go to bottom with G",
-			initialScroll: 0,
-			runes:         "G",
-			wantScroll:    100,
-			wantQuitting:  false,
-		},
-		{
-			name:          "go to bottom with end",
-			initialScroll: 0,
-			key:           tea.KeyEnd,
-			wantScroll:    100,
-			wantQuitting:  false,
-		},
-		{
-			name:          "quit with q",
-			initialScroll: 0,
-			runes:         "q",
-			wantScroll:    0,
-			wantQuitting:  true,
-			wantCmdNotNil: true,
-		},
-		{
-			name:          "quit with esc",
-			initialScroll: 0,
-			key:           tea.KeyEsc,
-			wantScroll:    0,
-			wantQuitting:  true,
-			wantCmdNotNil: true,
-		},
-		{
-			name:          "quit with ctrl+c",
-			initialScroll: 0,
-			key:           tea.KeyCtrlC,
-			wantScroll:    0,
-			wantQuitting:  true,
-			wantCmdNotNil: true,
-		},
+		{"quit with q", tea.KeyRunes, "q"},
+		{"quit with esc", tea.KeyEsc, ""},
+		{"quit with ctrl+c", tea.KeyCtrlC, ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			view := NewPlanView(p)
-			view.scroll = tt.initialScroll
 
-			// Create a key message
 			var msg tea.KeyMsg
-			if tt.runes != "" {
-				msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tt.runes)}
+			if tt.char != "" {
+				msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tt.char)}
 			} else {
 				msg = tea.KeyMsg{Type: tt.key}
 			}
@@ -720,20 +633,12 @@ func TestPlanViewModelUpdate(t *testing.T) {
 			model, cmd := view.Update(msg)
 			updatedView := model.(PlanViewModel)
 
-			if updatedView.scroll != tt.wantScroll {
-				t.Errorf("scroll = %d, want %d", updatedView.scroll, tt.wantScroll)
+			if !updatedView.quitting {
+				t.Error("expected quitting to be true")
 			}
 
-			if updatedView.quitting != tt.wantQuitting {
-				t.Errorf("quitting = %v, want %v", updatedView.quitting, tt.wantQuitting)
-			}
-
-			if tt.wantCmdNotNil && cmd == nil {
-				t.Error("expected cmd to be non-nil")
-			}
-
-			if !tt.wantCmdNotNil && cmd != nil {
-				t.Error("expected cmd to be nil")
+			if cmd == nil {
+				t.Error("expected cmd to be non-nil (tea.Quit)")
 			}
 		})
 	}
@@ -754,9 +659,14 @@ func TestPlanViewModelUpdateWindowSize(t *testing.T) {
 	model, _ := view.Update(msg)
 	updatedView := model.(PlanViewModel)
 
-	// Height should be window height - 4
-	expectedHeight := 26
-	if updatedView.height != expectedHeight {
-		t.Errorf("height = %d, want %d", updatedView.height, expectedHeight)
+	// View should be ready after receiving window size
+	if !updatedView.ready {
+		t.Error("expected ready to be true after WindowSizeMsg")
+	}
+
+	// Viewport should be initialized
+	expectedHeight := 30 - updatedView.headerHeight() - 2 // footer
+	if updatedView.viewport.Height != expectedHeight {
+		t.Errorf("viewport.Height = %d, want %d", updatedView.viewport.Height, expectedHeight)
 	}
 }

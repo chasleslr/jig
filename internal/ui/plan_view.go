@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/charleslr/jig/internal/plan"
@@ -22,21 +24,25 @@ var (
 	statusStyle = lipgloss.NewStyle().
 			Padding(0, 1).
 			Background(lipgloss.Color("235"))
+
+	helpStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("240"))
 )
 
-// PlanViewModel displays a plan in a nice format
+// PlanViewModel displays a plan in a nice format with scrolling
 type PlanViewModel struct {
 	plan     *plan.Plan
-	scroll   int
-	height   int
+	viewport viewport.Model
+	renderer *glamour.TermRenderer
+	width    int
+	ready    bool
 	quitting bool
 }
 
 // NewPlanView creates a new plan view
 func NewPlanView(p *plan.Plan) PlanViewModel {
 	return PlanViewModel{
-		plan:   p,
-		height: 20,
+		plan: p,
 	}
 }
 
@@ -47,41 +53,72 @@ func (m PlanViewModel) Init() tea.Cmd {
 
 // Update implements tea.Model
 func (m PlanViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	var cmds []tea.Cmd
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
 			m.quitting = true
 			return m, tea.Quit
-
-		case "up", "k":
-			if m.scroll > 0 {
-				m.scroll--
-			}
-
-		case "down", "j":
-			m.scroll++
-
-		case "home", "g":
-			m.scroll = 0
-
-		case "end", "G":
-			m.scroll = 100 // Will be clamped
 		}
 
 	case tea.WindowSizeMsg:
-		m.height = msg.Height - 4
+		headerHeight := m.headerHeight()
+		footerHeight := 2 // help text + padding
+		m.width = msg.Width
+
+		if !m.ready {
+			// Initialize glamour renderer with terminal width
+			renderer, err := glamour.NewTermRenderer(
+				glamour.WithAutoStyle(),
+				glamour.WithWordWrap(msg.Width),
+			)
+			if err == nil {
+				m.renderer = renderer
+			}
+
+			// Initialize viewport with window size
+			m.viewport = viewport.New(msg.Width, msg.Height-headerHeight-footerHeight)
+			m.viewport.YPosition = headerHeight
+			m.viewport.SetContent(m.renderContent())
+			m.ready = true
+		} else {
+			m.viewport.Width = msg.Width
+			m.viewport.Height = msg.Height - headerHeight - footerHeight
+			// Re-render content with new width
+			if m.renderer != nil {
+				renderer, err := glamour.NewTermRenderer(
+					glamour.WithAutoStyle(),
+					glamour.WithWordWrap(msg.Width),
+				)
+				if err == nil {
+					m.renderer = renderer
+					m.viewport.SetContent(m.renderContent())
+				}
+			}
+		}
 	}
 
-	return m, nil
+	// Handle viewport updates (scrolling)
+	m.viewport, cmd = m.viewport.Update(msg)
+	cmds = append(cmds, cmd)
+
+	return m, tea.Batch(cmds...)
 }
 
-// View implements tea.Model
-func (m PlanViewModel) View() string {
-	if m.quitting {
-		return ""
+// headerHeight returns the height of the fixed header
+func (m PlanViewModel) headerHeight() int {
+	lines := 4 // title + separator + blank + status line
+	if len(m.plan.Phases) > 0 {
+		lines += 2 // progress line + blank
 	}
+	return lines
+}
 
+// renderHeader renders the fixed header (title, status, progress)
+func (m PlanViewModel) renderHeader() string {
 	var b strings.Builder
 
 	// Title
@@ -93,7 +130,7 @@ func (m PlanViewModel) View() string {
 	// Status
 	b.WriteString(sectionStyle.Render("Status: "))
 	b.WriteString(formatPlanStatus(m.plan.Status))
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 
 	// Progress
 	if len(m.plan.Phases) > 0 {
@@ -101,22 +138,52 @@ func (m PlanViewModel) View() string {
 		b.WriteString(sectionStyle.Render("Progress: "))
 		b.WriteString(renderProgressBar(progress, 30))
 		b.WriteString(fmt.Sprintf(" %.0f%%", progress))
-		b.WriteString("\n\n")
+		b.WriteString("\n")
 	}
 
-	// Full markdown body (preserving all content)
-	if m.plan.RawContent != "" {
-		body := extractMarkdownBody(m.plan.RawContent)
-		if body != "" {
-			b.WriteString(body)
-			b.WriteString("\n\n")
+	return b.String()
+}
+
+// renderContent renders the scrollable content (markdown body)
+func (m PlanViewModel) renderContent() string {
+	if m.plan.RawContent == "" {
+		return ""
+	}
+
+	body := extractMarkdownBody(m.plan.RawContent)
+	if body == "" {
+		return ""
+	}
+
+	// Use glamour to render markdown if available
+	if m.renderer != nil {
+		rendered, err := m.renderer.Render(body)
+		if err == nil {
+			return strings.TrimSpace(rendered)
 		}
 	}
 
-	// Help
-	b.WriteString(unselectedStyle.Render("↑/↓ to scroll, q to quit"))
+	// Fallback to raw markdown
+	return body
+}
 
-	return b.String()
+// renderFooter renders the help text
+func (m PlanViewModel) renderFooter() string {
+	info := fmt.Sprintf(" %3.f%% ", m.viewport.ScrollPercent()*100)
+	return helpStyle.Render("↑/↓ scroll • q quit") + helpStyle.Render(info)
+}
+
+// View implements tea.Model
+func (m PlanViewModel) View() string {
+	if m.quitting {
+		return ""
+	}
+
+	if !m.ready {
+		return "Loading..."
+	}
+
+	return fmt.Sprintf("%s\n%s\n%s", m.renderHeader(), m.viewport.View(), m.renderFooter())
 }
 
 func formatPlanStatus(status plan.Status) string {
