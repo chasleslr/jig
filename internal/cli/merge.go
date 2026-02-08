@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -179,6 +180,18 @@ func runMerge(cmd *cobra.Command, args []string) error {
 	// Clean up worktree if it exists (must be done before branch deletion)
 	if worktreeInfo != nil {
 		printInfo(fmt.Sprintf("Cleaning up worktree at %s...", worktreeInfo.Path))
+
+		// Check if we're inside the worktree being removed
+		// If so, change to the main repo root first to avoid "no such file or directory" errors
+		insideWorktree, _ := git.IsInsidePath(worktreeInfo.Path)
+		if insideWorktree {
+			mainRepoRoot, err := git.GetMainRepoRoot()
+			if err == nil {
+				printInfo(fmt.Sprintf("Changing to %s before cleanup...", mainRepoRoot))
+				_ = os.Chdir(mainRepoRoot)
+			}
+		}
+
 		if err := git.RemoveWorktree(worktreeInfo.Path); err != nil {
 			printWarning(fmt.Sprintf("Could not remove worktree: %v", err))
 		} else {
