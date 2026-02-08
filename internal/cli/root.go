@@ -54,6 +54,7 @@ func init() {
 	rootCmd.AddCommand(reviewCmd)
 	rootCmd.AddCommand(mergeCmd)
 	rootCmd.AddCommand(prCmd)
+	rootCmd.AddCommand(syncCmd)
 	rootCmd.AddCommand(checkoutCmd)
 	rootCmd.AddCommand(cleanCmd)
 	rootCmd.AddCommand(configCmd)
