@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/charleslr/jig/internal/config"
+	"github.com/charleslr/jig/internal/git"
 	"github.com/charleslr/jig/internal/plan"
 )
 
@@ -240,6 +241,41 @@ func (c *Cache) DeleteIssueMetadata(issueID string) error {
 	return nil
 }
 
+// SyncPRForIssue fetches PR info from GitHub and updates IssueMetadata.
+// It uses git.DefaultClient which can be replaced with a mock for testing.
+func (c *Cache) SyncPRForIssue(issueID string) (int, error) {
+	return c.SyncPRForIssueWithClient(issueID, git.DefaultClient)
+}
+
+// SyncPRForIssueWithClient fetches PR info using the provided git client.
+// This allows for dependency injection in tests.
+func (c *Cache) SyncPRForIssueWithClient(issueID string, client git.Client) (int, error) {
+	meta, err := c.GetIssueMetadata(issueID)
+	if err != nil || meta == nil {
+		return 0, fmt.Errorf("no metadata found for issue %s", issueID)
+	}
+
+	if meta.PRNumber > 0 {
+		return meta.PRNumber, nil // Already have PR
+	}
+
+	if meta.BranchName == "" {
+		return 0, fmt.Errorf("no branch name recorded for issue %s", issueID)
+	}
+
+	pr, err := client.GetPRForBranch(meta.BranchName)
+	if err != nil {
+		return 0, err
+	}
+	if pr == nil {
+		return 0, nil // No PR exists yet
+	}
+
+	meta.PRNumber = pr.Number
+	meta.PRURL = pr.URL
+	return pr.Number, c.SaveIssueMetadata(meta)
+}
+
 // Clear removes all cached data
 func (c *Cache) Clear() error {
 	for _, subdir := range []string{"plans", "issues"} {
@@ -257,9 +293,18 @@ func (c *Cache) Clear() error {
 // DefaultCache is a convenience instance
 var DefaultCache *Cache
 
-// Init initializes the default cache
+// Init initializes the default cache if not already initialized.
+// This is idempotent - if DefaultCache is already set (e.g., by tests), it's a no-op.
 func Init() error {
+	if DefaultCache != nil {
+		return nil
+	}
 	var err error
 	DefaultCache, err = NewCache()
 	return err
+}
+
+// NewCacheWithDir creates a cache instance with a specific directory (for testing)
+func NewCacheWithDir(dir string) *Cache {
+	return &Cache{dir: dir}
 }

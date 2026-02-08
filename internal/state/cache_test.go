@@ -1,11 +1,14 @@
 package state
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/charleslr/jig/internal/git"
+	gitmock "github.com/charleslr/jig/internal/git/mock"
 	"github.com/charleslr/jig/internal/plan"
 )
 
@@ -250,5 +253,920 @@ func TestGetPlanMarkdownNotFound(t *testing.T) {
 	}
 	if content != "" {
 		t.Errorf("GetPlanMarkdown() should return empty string for non-existent plan, got %q", content)
+	}
+}
+
+func TestSyncPRForIssueNoMetadata(t *testing.T) {
+	// Create a temporary directory for the test cache
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create cache directories
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Try to sync an issue with no metadata
+	_, err = cache.SyncPRForIssue("nonexistent")
+	if err == nil {
+		t.Error("SyncPRForIssue() should error when no metadata exists")
+	}
+	if !strings.Contains(err.Error(), "no metadata found") {
+		t.Errorf("error should mention 'no metadata found', got: %v", err)
+	}
+}
+
+func TestSyncPRForIssueNoBranch(t *testing.T) {
+	// Create a temporary directory for the test cache
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create cache directories
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Create metadata without a branch name
+	meta := &IssueMetadata{
+		IssueID:    "test-issue",
+		BranchName: "", // No branch name
+	}
+	if err := cache.SaveIssueMetadata(meta); err != nil {
+		t.Fatalf("SaveIssueMetadata() error = %v", err)
+	}
+
+	// Try to sync
+	_, err = cache.SyncPRForIssue("test-issue")
+	if err == nil {
+		t.Error("SyncPRForIssue() should error when no branch name exists")
+	}
+	if !strings.Contains(err.Error(), "no branch name") {
+		t.Errorf("error should mention 'no branch name', got: %v", err)
+	}
+}
+
+func TestSyncPRForIssueAlreadyHasPR(t *testing.T) {
+	// Create a temporary directory for the test cache
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create cache directories
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Create metadata with existing PR number
+	meta := &IssueMetadata{
+		IssueID:    "test-issue",
+		BranchName: "feature-branch",
+		PRNumber:   42,
+		PRURL:      "https://github.com/test/repo/pull/42",
+	}
+	if err := cache.SaveIssueMetadata(meta); err != nil {
+		t.Fatalf("SaveIssueMetadata() error = %v", err)
+	}
+
+	// Sync should return existing PR number without calling GitHub
+	prNumber, err := cache.SyncPRForIssue("test-issue")
+	if err != nil {
+		t.Fatalf("SyncPRForIssue() error = %v", err)
+	}
+	if prNumber != 42 {
+		t.Errorf("SyncPRForIssue() = %d, want 42", prNumber)
+	}
+}
+
+func TestListIssueMetadata(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Test empty list
+	metadata, err := cache.ListIssueMetadata()
+	if err != nil {
+		t.Fatalf("ListIssueMetadata() error = %v", err)
+	}
+	if len(metadata) != 0 {
+		t.Errorf("ListIssueMetadata() = %d items, want 0", len(metadata))
+	}
+
+	// Add some metadata
+	for _, id := range []string{"NUM-1", "NUM-2", "NUM-3"} {
+		meta := &IssueMetadata{
+			IssueID:    id,
+			BranchName: id + "-branch",
+		}
+		if err := cache.SaveIssueMetadata(meta); err != nil {
+			t.Fatalf("SaveIssueMetadata() error = %v", err)
+		}
+	}
+
+	// Test list with items
+	metadata, err = cache.ListIssueMetadata()
+	if err != nil {
+		t.Fatalf("ListIssueMetadata() error = %v", err)
+	}
+	if len(metadata) != 3 {
+		t.Errorf("ListIssueMetadata() = %d items, want 3", len(metadata))
+	}
+}
+
+func TestListIssueMetadataSkipsNonJSON(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	issueDir := filepath.Join(tmpDir, "issues")
+	if err := os.MkdirAll(issueDir, 0755); err != nil {
+		t.Fatalf("failed to create issues dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, "plans"), 0755); err != nil {
+		t.Fatalf("failed to create plans dir: %v", err)
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Add valid metadata
+	meta := &IssueMetadata{IssueID: "NUM-1", BranchName: "branch-1"}
+	if err := cache.SaveIssueMetadata(meta); err != nil {
+		t.Fatalf("SaveIssueMetadata() error = %v", err)
+	}
+
+	// Add a non-JSON file that should be skipped
+	if err := os.WriteFile(filepath.Join(issueDir, "readme.txt"), []byte("ignore me"), 0644); err != nil {
+		t.Fatalf("failed to write txt file: %v", err)
+	}
+
+	// Add a subdirectory that should be skipped
+	if err := os.MkdirAll(filepath.Join(issueDir, "subdir"), 0755); err != nil {
+		t.Fatalf("failed to create subdir: %v", err)
+	}
+
+	metadata, err := cache.ListIssueMetadata()
+	if err != nil {
+		t.Fatalf("ListIssueMetadata() error = %v", err)
+	}
+	if len(metadata) != 1 {
+		t.Errorf("ListIssueMetadata() = %d items, want 1", len(metadata))
+	}
+}
+
+func TestDeleteIssueMetadata(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Save metadata
+	meta := &IssueMetadata{IssueID: "NUM-1", BranchName: "branch-1"}
+	if err := cache.SaveIssueMetadata(meta); err != nil {
+		t.Fatalf("SaveIssueMetadata() error = %v", err)
+	}
+
+	// Verify it exists
+	got, err := cache.GetIssueMetadata("NUM-1")
+	if err != nil || got == nil {
+		t.Fatalf("metadata should exist before delete")
+	}
+
+	// Delete it
+	if err := cache.DeleteIssueMetadata("NUM-1"); err != nil {
+		t.Fatalf("DeleteIssueMetadata() error = %v", err)
+	}
+
+	// Verify it's gone
+	got, err = cache.GetIssueMetadata("NUM-1")
+	if err != nil {
+		t.Fatalf("GetIssueMetadata() error = %v", err)
+	}
+	if got != nil {
+		t.Error("metadata should be nil after delete")
+	}
+}
+
+func TestDeleteIssueMetadataNotExists(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Delete non-existent metadata should not error
+	if err := cache.DeleteIssueMetadata("nonexistent"); err != nil {
+		t.Errorf("DeleteIssueMetadata() should not error for non-existent: %v", err)
+	}
+}
+
+func TestDeletePlan(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Save a plan
+	p := &plan.Plan{
+		ID:         "test-plan",
+		Title:      "Test Plan",
+		Status:     plan.StatusDraft,
+		Author:     "test",
+		RawContent: "---\nid: test-plan\ntitle: Test Plan\nstatus: draft\nauthor: test\n---\n# Test",
+	}
+	if err := cache.SavePlan(p); err != nil {
+		t.Fatalf("SavePlan() error = %v", err)
+	}
+
+	// Verify files exist
+	jsonPath := filepath.Join(tmpDir, "plans", "test-plan.json")
+	mdPath := filepath.Join(tmpDir, "plans", "test-plan.md")
+	if _, err := os.Stat(jsonPath); os.IsNotExist(err) {
+		t.Fatal("JSON file should exist before delete")
+	}
+	if _, err := os.Stat(mdPath); os.IsNotExist(err) {
+		t.Fatal("MD file should exist before delete")
+	}
+
+	// Delete it
+	if err := cache.DeletePlan("test-plan"); err != nil {
+		t.Fatalf("DeletePlan() error = %v", err)
+	}
+
+	// Verify files are gone
+	if _, err := os.Stat(jsonPath); !os.IsNotExist(err) {
+		t.Error("JSON file should not exist after delete")
+	}
+	if _, err := os.Stat(mdPath); !os.IsNotExist(err) {
+		t.Error("MD file should not exist after delete")
+	}
+}
+
+func TestListPlans(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Test empty list
+	plans, err := cache.ListPlans()
+	if err != nil {
+		t.Fatalf("ListPlans() error = %v", err)
+	}
+	if len(plans) != 0 {
+		t.Errorf("ListPlans() = %d items, want 0", len(plans))
+	}
+
+	// Add some plans
+	for i, id := range []string{"plan-1", "plan-2"} {
+		p := &plan.Plan{
+			ID:         id,
+			Title:      "Test Plan " + id,
+			Status:     plan.StatusDraft,
+			Author:     "test",
+			RawContent: "---\nid: " + id + "\ntitle: Test\nstatus: draft\nauthor: test\n---\n# Test " + string(rune('A'+i)),
+		}
+		if err := cache.SavePlan(p); err != nil {
+			t.Fatalf("SavePlan() error = %v", err)
+		}
+	}
+
+	// Test list with items
+	plans, err = cache.ListPlans()
+	if err != nil {
+		t.Fatalf("ListPlans() error = %v", err)
+	}
+	if len(plans) != 2 {
+		t.Errorf("ListPlans() = %d items, want 2", len(plans))
+	}
+}
+
+func TestListPlansSkipsNonJSON(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	planDir := filepath.Join(tmpDir, "plans")
+	if err := os.MkdirAll(planDir, 0755); err != nil {
+		t.Fatalf("failed to create plans dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, "issues"), 0755); err != nil {
+		t.Fatalf("failed to create issues dir: %v", err)
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Add valid plan
+	p := &plan.Plan{
+		ID:         "plan-1",
+		Title:      "Test Plan",
+		Status:     plan.StatusDraft,
+		Author:     "test",
+		RawContent: "---\nid: plan-1\ntitle: Test\nstatus: draft\nauthor: test\n---\n# Test",
+	}
+	if err := cache.SavePlan(p); err != nil {
+		t.Fatalf("SavePlan() error = %v", err)
+	}
+
+	// Add a non-JSON file that should be skipped (note: .md files are created by SavePlan)
+	if err := os.WriteFile(filepath.Join(planDir, "readme.txt"), []byte("ignore"), 0644); err != nil {
+		t.Fatalf("failed to write txt file: %v", err)
+	}
+
+	// Add a subdirectory that should be skipped
+	if err := os.MkdirAll(filepath.Join(planDir, "subdir"), 0755); err != nil {
+		t.Fatalf("failed to create subdir: %v", err)
+	}
+
+	plans, err := cache.ListPlans()
+	if err != nil {
+		t.Fatalf("ListPlans() error = %v", err)
+	}
+	if len(plans) != 1 {
+		t.Errorf("ListPlans() = %d items, want 1", len(plans))
+	}
+}
+
+func TestClear(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Add some data
+	p := &plan.Plan{
+		ID:         "plan-1",
+		Title:      "Test Plan",
+		Status:     plan.StatusDraft,
+		Author:     "test",
+		RawContent: "---\nid: plan-1\ntitle: Test\nstatus: draft\nauthor: test\n---\n# Test",
+	}
+	if err := cache.SavePlan(p); err != nil {
+		t.Fatalf("SavePlan() error = %v", err)
+	}
+
+	meta := &IssueMetadata{IssueID: "NUM-1", BranchName: "branch-1"}
+	if err := cache.SaveIssueMetadata(meta); err != nil {
+		t.Fatalf("SaveIssueMetadata() error = %v", err)
+	}
+
+	// Clear
+	if err := cache.Clear(); err != nil {
+		t.Fatalf("Clear() error = %v", err)
+	}
+
+	// Verify everything is gone
+	plans, _ := cache.ListPlans()
+	if len(plans) != 0 {
+		t.Errorf("ListPlans() after Clear() = %d, want 0", len(plans))
+	}
+
+	metadata, _ := cache.ListIssueMetadata()
+	if len(metadata) != 0 {
+		t.Errorf("ListIssueMetadata() after Clear() = %d, want 0", len(metadata))
+	}
+
+	// Verify directories still exist (recreated by Clear)
+	if _, err := os.Stat(filepath.Join(tmpDir, "plans")); os.IsNotExist(err) {
+		t.Error("plans directory should exist after Clear()")
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "issues")); os.IsNotExist(err) {
+		t.Error("issues directory should exist after Clear()")
+	}
+}
+
+func TestSaveIssueMetadataRequiresID(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	meta := &IssueMetadata{IssueID: "", BranchName: "branch"}
+	err = cache.SaveIssueMetadata(meta)
+	if err == nil {
+		t.Error("SaveIssueMetadata() should error when IssueID is empty")
+	}
+	if !strings.Contains(err.Error(), "issue ID is required") {
+		t.Errorf("error should mention 'issue ID is required', got: %v", err)
+	}
+}
+
+func TestGetPlanNotFound(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	p, err := cache.GetPlan("nonexistent")
+	if err != nil {
+		t.Fatalf("GetPlan() unexpected error = %v", err)
+	}
+	if p != nil {
+		t.Error("GetPlan() should return nil for non-existent plan")
+	}
+}
+
+func TestGetIssueMetadataNotFound(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	meta, err := cache.GetIssueMetadata("nonexistent")
+	if err != nil {
+		t.Fatalf("GetIssueMetadata() unexpected error = %v", err)
+	}
+	if meta != nil {
+		t.Error("GetIssueMetadata() should return nil for non-existent metadata")
+	}
+}
+
+func TestNewCacheWithDir(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create cache directories
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := NewCacheWithDir(tmpDir)
+	if cache == nil {
+		t.Fatal("NewCacheWithDir() returned nil")
+	}
+
+	// Verify cache works by saving and retrieving metadata
+	meta := &IssueMetadata{IssueID: "TEST-1", BranchName: "test-branch"}
+	if err := cache.SaveIssueMetadata(meta); err != nil {
+		t.Fatalf("SaveIssueMetadata() error = %v", err)
+	}
+
+	got, err := cache.GetIssueMetadata("TEST-1")
+	if err != nil {
+		t.Fatalf("GetIssueMetadata() error = %v", err)
+	}
+	if got == nil || got.IssueID != "TEST-1" {
+		t.Error("NewCacheWithDir() cache should be functional")
+	}
+}
+
+func TestSyncPRForIssueGetMetadataError(t *testing.T) {
+	// Test the case where GetIssueMetadata returns an error
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Only create plans dir, not issues dir - this will cause issues when reading
+	if err := os.MkdirAll(filepath.Join(tmpDir, "plans"), 0755); err != nil {
+		t.Fatalf("failed to create plans dir: %v", err)
+	}
+	issuesDir := filepath.Join(tmpDir, "issues")
+	if err := os.MkdirAll(issuesDir, 0755); err != nil {
+		t.Fatalf("failed to create issues dir: %v", err)
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Write invalid JSON to trigger parse error
+	invalidJSON := filepath.Join(issuesDir, "BAD-1.json")
+	if err := os.WriteFile(invalidJSON, []byte("not valid json"), 0644); err != nil {
+		t.Fatalf("failed to write invalid JSON: %v", err)
+	}
+
+	_, err = cache.SyncPRForIssue("BAD-1")
+	if err == nil {
+		t.Error("SyncPRForIssue() should error on invalid JSON")
+	}
+}
+
+// Tests for SyncPRForIssueWithClient using mock git client
+
+func TestSyncPRForIssueWithClientFindsPR(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Create metadata with branch but no PR
+	meta := &IssueMetadata{
+		IssueID:    "TEST-123",
+		BranchName: "feature-branch",
+	}
+	if err := cache.SaveIssueMetadata(meta); err != nil {
+		t.Fatalf("SaveIssueMetadata() error = %v", err)
+	}
+
+	// Set up mock client with a PR for that branch
+	mockClient := gitmock.NewClient()
+	mockClient.AddPR(&git.PR{
+		Number:      42,
+		Title:       "Test PR",
+		URL:         "https://github.com/test/repo/pull/42",
+		HeadRefName: "feature-branch",
+	})
+
+	// Sync should find the PR
+	prNumber, err := cache.SyncPRForIssueWithClient("TEST-123", mockClient)
+	if err != nil {
+		t.Fatalf("SyncPRForIssueWithClient() error = %v", err)
+	}
+	if prNumber != 42 {
+		t.Errorf("SyncPRForIssueWithClient() = %d, want 42", prNumber)
+	}
+
+	// Verify metadata was updated
+	updated, _ := cache.GetIssueMetadata("TEST-123")
+	if updated.PRNumber != 42 {
+		t.Errorf("PRNumber = %d, want 42", updated.PRNumber)
+	}
+	if updated.PRURL != "https://github.com/test/repo/pull/42" {
+		t.Errorf("PRURL = %q, want %q", updated.PRURL, "https://github.com/test/repo/pull/42")
+	}
+}
+
+func TestSyncPRForIssueWithClientNoPRFound(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Create metadata with branch but no PR
+	meta := &IssueMetadata{
+		IssueID:    "TEST-456",
+		BranchName: "orphan-branch",
+	}
+	if err := cache.SaveIssueMetadata(meta); err != nil {
+		t.Fatalf("SaveIssueMetadata() error = %v", err)
+	}
+
+	// Mock client has no PRs
+	mockClient := gitmock.NewClient()
+
+	// Sync should return 0 (no PR found)
+	prNumber, err := cache.SyncPRForIssueWithClient("TEST-456", mockClient)
+	if err != nil {
+		t.Fatalf("SyncPRForIssueWithClient() error = %v", err)
+	}
+	if prNumber != 0 {
+		t.Errorf("SyncPRForIssueWithClient() = %d, want 0", prNumber)
+	}
+}
+
+func TestSyncPRForIssueWithClientAPIError(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Create metadata with branch
+	meta := &IssueMetadata{
+		IssueID:    "TEST-789",
+		BranchName: "error-branch",
+	}
+	if err := cache.SaveIssueMetadata(meta); err != nil {
+		t.Fatalf("SaveIssueMetadata() error = %v", err)
+	}
+
+	// Mock client returns error
+	mockClient := gitmock.NewClient()
+	mockClient.GetPRForBranchError = fmt.Errorf("GitHub API error")
+
+	// Sync should return the error
+	_, err = cache.SyncPRForIssueWithClient("TEST-789", mockClient)
+	if err == nil {
+		t.Error("SyncPRForIssueWithClient() should error when API fails")
+	}
+}
+
+func TestSyncPRForIssueWithClientAlreadyHasPR(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Create metadata with existing PR
+	meta := &IssueMetadata{
+		IssueID:    "TEST-EXISTING",
+		BranchName: "existing-branch",
+		PRNumber:   99,
+		PRURL:      "https://github.com/test/repo/pull/99",
+	}
+	if err := cache.SaveIssueMetadata(meta); err != nil {
+		t.Fatalf("SaveIssueMetadata() error = %v", err)
+	}
+
+	// Mock client - should not be called since PR already exists
+	mockClient := gitmock.NewClient()
+
+	// Sync should return existing PR number without calling API
+	prNumber, err := cache.SyncPRForIssueWithClient("TEST-EXISTING", mockClient)
+	if err != nil {
+		t.Fatalf("SyncPRForIssueWithClient() error = %v", err)
+	}
+	if prNumber != 99 {
+		t.Errorf("SyncPRForIssueWithClient() = %d, want 99", prNumber)
+	}
+}
+
+func TestSyncPRForIssueWithClientNoMetadata(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+	mockClient := gitmock.NewClient()
+
+	// No metadata saved - should error
+	_, err = cache.SyncPRForIssueWithClient("NONEXISTENT", mockClient)
+	if err == nil {
+		t.Error("SyncPRForIssueWithClient() should error when no metadata exists")
+	}
+	if !strings.Contains(err.Error(), "no metadata found") {
+		t.Errorf("error should mention 'no metadata found', got: %v", err)
+	}
+}
+
+func TestSyncPRForIssueWithClientNoBranch(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Create metadata without branch
+	meta := &IssueMetadata{
+		IssueID:    "NO-BRANCH",
+		BranchName: "",
+	}
+	if err := cache.SaveIssueMetadata(meta); err != nil {
+		t.Fatalf("SaveIssueMetadata() error = %v", err)
+	}
+
+	mockClient := gitmock.NewClient()
+
+	// Should error - no branch name
+	_, err = cache.SyncPRForIssueWithClient("NO-BRANCH", mockClient)
+	if err == nil {
+		t.Error("SyncPRForIssueWithClient() should error when no branch name")
+	}
+	if !strings.Contains(err.Error(), "no branch name") {
+		t.Errorf("error should mention 'no branch name', got: %v", err)
+	}
+}
+
+// Tests for idempotent Init()
+
+func TestInitIdempotent(t *testing.T) {
+	// Save original DefaultCache
+	originalCache := DefaultCache
+
+	// Create a test cache
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	testCache := NewCacheWithDir(tmpDir)
+	DefaultCache = testCache
+
+	// Call Init() - should be a no-op since DefaultCache is already set
+	err = Init()
+	if err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	// DefaultCache should still be the test cache, not replaced
+	if DefaultCache != testCache {
+		t.Error("Init() should not replace DefaultCache when already set")
+	}
+
+	// Restore original
+	DefaultCache = originalCache
+}
+
+func TestInitWhenNil(t *testing.T) {
+	// Save original DefaultCache
+	originalCache := DefaultCache
+	defer func() { DefaultCache = originalCache }()
+
+	// Set DefaultCache to nil
+	DefaultCache = nil
+
+	// Call Init() - should create a new cache
+	// Note: This will use the real config.CacheDir() so we can't fully test the path
+	// but we can verify it doesn't panic and sets DefaultCache
+	err := Init()
+	if err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	if DefaultCache == nil {
+		t.Error("Init() should set DefaultCache when it was nil")
+	}
+}
+
+func TestSyncPRForIssueDelegatesToWithClient(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Create metadata with existing PR (so we don't need real gh CLI)
+	meta := &IssueMetadata{
+		IssueID:    "DELEGATE-TEST",
+		BranchName: "delegate-branch",
+		PRNumber:   77,
+		PRURL:      "https://github.com/test/repo/pull/77",
+	}
+	if err := cache.SaveIssueMetadata(meta); err != nil {
+		t.Fatalf("SaveIssueMetadata() error = %v", err)
+	}
+
+	// SyncPRForIssue uses git.DefaultClient, but since we have an existing PR
+	// it won't actually call the client
+	prNumber, err := cache.SyncPRForIssue("DELEGATE-TEST")
+	if err != nil {
+		t.Fatalf("SyncPRForIssue() error = %v", err)
+	}
+	if prNumber != 77 {
+		t.Errorf("SyncPRForIssue() = %d, want 77", prNumber)
 	}
 }
