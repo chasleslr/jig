@@ -289,15 +289,25 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 	// Get issue context if provided
 	if len(args) > 0 {
 		issueID = args[0]
-		printInfo(fmt.Sprintf("Fetching issue context for %s...", issueID))
 
 		t, err := getTracker(cfg)
 		if err != nil {
 			printWarning(fmt.Sprintf("Could not connect to tracker: %v", err))
 		} else {
-			issue, err = t.GetIssue(ctx, issueID)
-			if err != nil {
-				printWarning(fmt.Sprintf("Could not fetch issue: %v", err))
+			// Fetch issue with spinner for better UX during API latency
+			var fetchErr error
+			if ui.IsInteractive() {
+				fetchErr = ui.RunWithSpinner(fmt.Sprintf("Fetching issue %s", issueID), func() error {
+					var err error
+					issue, err = t.GetIssue(ctx, issueID)
+					return err
+				})
+			} else {
+				issue, fetchErr = t.GetIssue(ctx, issueID)
+			}
+
+			if fetchErr != nil {
+				printWarning(fmt.Sprintf("Could not fetch issue: %v", fetchErr))
 			} else {
 				// Show interactive menu if we have an issue and are in interactive mode
 				if ui.IsInteractive() {
