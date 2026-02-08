@@ -62,11 +62,28 @@ func runMerge(cmd *cobra.Command, args []string) error {
 
 	// Get PR number
 	prNumber := mergePR
+	if prNumber == 0 && issueID != "" {
+		// Try to look up PR from issue metadata
+		if err := state.Init(); err == nil {
+			meta, _ := state.DefaultCache.GetIssueMetadata(issueID)
+			if meta != nil && meta.PRNumber > 0 {
+				prNumber = meta.PRNumber
+				printInfo(fmt.Sprintf("Found PR #%d for %s", prNumber, issueID))
+			} else if meta != nil && meta.BranchName != "" {
+				printInfo(fmt.Sprintf("Syncing PR info for %s...", issueID))
+				if syncedPR, err := state.DefaultCache.SyncPRForIssue(issueID); err == nil && syncedPR > 0 {
+					prNumber = syncedPR
+					printSuccess(fmt.Sprintf("Found PR #%d", prNumber))
+				}
+			}
+		}
+	}
+
 	if prNumber == 0 {
 		// Try to get from current branch
 		pr, err := git.GetPR()
 		if err != nil {
-			return fmt.Errorf("no PR found for current branch (use --pr to specify)")
+			return fmt.Errorf("no PR found - provide ISSUE argument or use --pr flag")
 		}
 		prNumber = pr.Number
 	}
