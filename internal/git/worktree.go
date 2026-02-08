@@ -206,3 +206,50 @@ func GetWorktreeRoot() (string, error) {
 	}
 	return strings.TrimSpace(string(output)), nil
 }
+
+// GetMainRepoRoot returns the root directory of the main repository.
+// When in a worktree, this returns the main repo root, not the worktree root.
+func GetMainRepoRoot() (string, error) {
+	// Get the common git directory (shared by all worktrees)
+	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("not in a git repository: %w", err)
+	}
+
+	gitCommonDir := strings.TrimSpace(string(output))
+
+	// The git common dir is typically .git (or the .git directory path)
+	// The main repo root is the parent of this directory
+	absGitDir, err := filepath.Abs(gitCommonDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
+	// Handle the case where gitCommonDir is ".git" (relative path)
+	// or an absolute path like "/path/to/repo/.git"
+	mainRepoRoot := filepath.Dir(absGitDir)
+
+	return mainRepoRoot, nil
+}
+
+// IsInsidePath checks if the current working directory is inside the given path.
+func IsInsidePath(targetPath string) (bool, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return false, err
+	}
+
+	absCwd, err := filepath.Abs(cwd)
+	if err != nil {
+		return false, err
+	}
+
+	absTarget, err := filepath.Abs(targetPath)
+	if err != nil {
+		return false, err
+	}
+
+	// Check if cwd is the same as target or a subdirectory of target
+	return absCwd == absTarget || strings.HasPrefix(absCwd, absTarget+string(os.PathSeparator)), nil
+}
