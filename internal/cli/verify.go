@@ -111,8 +111,8 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Get the runner (only needed if we're going to launch)
-	r, err := runner.Get(runnerName)
+	// Get the runner from the injected registry (only needed if we're going to launch)
+	r, err := deps.RunnerRegistry.Get(runnerName)
 	if err != nil {
 		return fmt.Errorf("runner not found: %s", runnerName)
 	}
