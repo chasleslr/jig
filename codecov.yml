@@ -3,3 +3,6 @@ coverage:
     patch:
       default:
         target: 90%
+
+ignore:
+  - "tests/**/*"  # Test infrastructure is not production code

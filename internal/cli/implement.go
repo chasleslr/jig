@@ -202,17 +202,14 @@ func runImplement(cmd *cobra.Command, args []string) error {
 		runnerName = "claude"
 	}
 
-	// Get the runner
-	r, err := runner.Get(runnerName)
+	// Get the runner from the injected registry
+	r, err := deps.RunnerRegistry.Get(runnerName)
 	if err != nil {
 		return fmt.Errorf("runner not found: %s", runnerName)
 	}
 
-	if !r.Available() {
-		return fmt.Errorf("runner '%s' is not available (not installed or not in PATH)", runnerName)
-	}
-
 	// Prepare the runner context (writes plan to .jig/plan.md)
+	// This doesn't require the runner binary to be available
 	prepOpts := &runner.PrepareOpts{
 		Plan:        p,
 		WorktreeDir: worktreePath,
@@ -229,6 +226,11 @@ func runImplement(cmd *cobra.Command, args []string) error {
 		fmt.Printf("\nTo start implementing:\n")
 		fmt.Printf("  cd %s && %s /jig:implement\n", worktreePath, runnerName)
 		return nil
+	}
+
+	// Only check runner availability if we're going to launch
+	if !r.Available() {
+		return fmt.Errorf("runner '%s' is not available (not installed or not in PATH)", runnerName)
 	}
 
 	printInfo(fmt.Sprintf("Launching %s for implementation...", runnerName))

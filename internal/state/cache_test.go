@@ -74,23 +74,38 @@ More custom content that should not be lost.
 		t.Fatalf("failed to read saved markdown: %v", err)
 	}
 
-	// Verify the content matches exactly
-	if string(savedContent) != rawContent {
-		t.Error("saved content does not match original RawContent")
-		t.Errorf("expected:\n%s", rawContent)
-		t.Errorf("got:\n%s", string(savedContent))
+	content := string(savedContent)
+
+	// Verify frontmatter values are correct (format may differ due to Serialize)
+	if !strings.Contains(content, "id: test-preserve") {
+		t.Error("saved content should contain plan ID")
+	}
+	if !strings.Contains(content, "title: Test Preservation") {
+		t.Error("saved content should contain title")
+	}
+	if !strings.Contains(content, "status: draft") {
+		t.Error("saved content should contain status")
+	}
+	if !strings.Contains(content, "author: testuser") {
+		t.Error("saved content should contain author")
 	}
 
-	// Verify custom sections are preserved
-	if !strings.Contains(string(savedContent), "Extra Custom Section") {
+	// Verify custom sections are preserved (body content)
+	if !strings.Contains(content, "Extra Custom Section") {
 		t.Error("saved content should contain 'Extra Custom Section'")
 	}
-	if !strings.Contains(string(savedContent), "This extra content should be preserved exactly as-is") {
+	if !strings.Contains(content, "This extra content should be preserved exactly as-is") {
 		t.Error("saved content should contain the extra content text")
+	}
+	if !strings.Contains(content, "Nested Section") {
+		t.Error("saved content should contain nested sections")
+	}
+	if !strings.Contains(content, "More custom content that should not be lost") {
+		t.Error("saved content should preserve nested section content")
 	}
 }
 
-func TestSavePlanRequiresRawContent(t *testing.T) {
+func TestSavePlanWithoutRawContent(t *testing.T) {
 	// Create a temporary directory for the test cache
 	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
 	if err != nil {
@@ -107,22 +122,33 @@ func TestSavePlanRequiresRawContent(t *testing.T) {
 
 	cache := &Cache{dir: tmpDir}
 
-	// Create a plan without raw content
+	// Create a plan without raw content (simulating a programmatically created plan)
 	p := &plan.Plan{
-		ID:         "test-no-raw",
-		Title:      "Test No Raw Content",
-		Status:     plan.StatusDraft,
-		Author:     "testuser",
-		RawContent: "", // Empty raw content
+		ID:               "test-no-raw",
+		Title:            "Test No Raw Content",
+		Status:           plan.StatusDraft,
+		Author:           "testuser",
+		ProblemStatement: "Test problem",
+		ProposedSolution: "Test solution",
+		RawContent:       "", // Empty raw content
 	}
 
-	// Save should fail
+	// Save should succeed - Serialize will reconstruct markdown from plan fields
 	err = cache.SavePlan(p)
-	if err == nil {
-		t.Error("SavePlan() should error when RawContent is empty")
+	if err != nil {
+		t.Errorf("SavePlan() should succeed when RawContent is empty (Serialize reconstructs it): %v", err)
 	}
-	if !strings.Contains(err.Error(), "no raw content") {
-		t.Errorf("error should mention 'no raw content', got: %v", err)
+
+	// Verify the markdown was generated
+	mdContent, err := cache.GetPlanMarkdown("test-no-raw")
+	if err != nil {
+		t.Errorf("GetPlanMarkdown() failed: %v", err)
+	}
+	if !strings.Contains(mdContent, "Test No Raw Content") {
+		t.Error("generated markdown should contain the title")
+	}
+	if !strings.Contains(mdContent, "status: draft") {
+		t.Error("generated markdown should contain the status")
 	}
 }
 
@@ -218,12 +244,26 @@ This should be retrievable via GetPlanMarkdown.
 		t.Fatalf("GetPlanMarkdown() error = %v", err)
 	}
 
-	if content != rawContent {
-		t.Error("GetPlanMarkdown() content does not match original")
+	// Check frontmatter values are preserved (format may differ due to Serialize)
+	if !strings.Contains(content, "id: test-get-md") {
+		t.Error("GetPlanMarkdown() should contain the plan ID")
+	}
+	if !strings.Contains(content, "title: Test Get Markdown") {
+		t.Error("GetPlanMarkdown() should contain the title")
+	}
+	if !strings.Contains(content, "status: draft") {
+		t.Error("GetPlanMarkdown() should contain the status")
+	}
+	if !strings.Contains(content, "author: testuser") {
+		t.Error("GetPlanMarkdown() should contain the author")
 	}
 
+	// Check body content is preserved
 	if !strings.Contains(content, "Custom Content") {
 		t.Error("GetPlanMarkdown() should return content with custom sections")
+	}
+	if !strings.Contains(content, "This should be retrievable via GetPlanMarkdown.") {
+		t.Error("GetPlanMarkdown() should preserve custom content text")
 	}
 }
 

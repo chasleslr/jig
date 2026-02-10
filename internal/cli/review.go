@@ -159,8 +159,8 @@ func runReview(cmd *cobra.Command, args []string) error {
 		runnerName = "claude"
 	}
 
-	// Get the runner
-	r, err := runner.Get(runnerName)
+	// Get the runner from the injected registry
+	r, err := deps.RunnerRegistry.Get(runnerName)
 	if err != nil {
 		return fmt.Errorf("runner not found: %s", runnerName)
 	}
