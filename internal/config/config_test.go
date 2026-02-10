@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestLinearConfig_ShouldSyncPlanOnSave(t *testing.T) {
 	tests := []struct {
@@ -71,4 +75,56 @@ func TestLinearConfig_GetPlanLabelName(t *testing.T) {
 // boolPtr returns a pointer to a bool value
 func boolPtr(b bool) *bool {
 	return &b
+}
+
+func TestJigDir(t *testing.T) {
+	t.Run("uses JIG_HOME when set", func(t *testing.T) {
+		// Save original value
+		orig := os.Getenv("JIG_HOME")
+		defer func() {
+			if orig != "" {
+				os.Setenv("JIG_HOME", orig)
+			} else {
+				os.Unsetenv("JIG_HOME")
+			}
+		}()
+
+		// Set custom JIG_HOME
+		customDir := "/custom/jig/home"
+		os.Setenv("JIG_HOME", customDir)
+
+		dir, err := JigDir()
+		if err != nil {
+			t.Fatalf("JigDir() error = %v", err)
+		}
+		if dir != customDir {
+			t.Errorf("JigDir() = %q, want %q", dir, customDir)
+		}
+	})
+
+	t.Run("falls back to ~/.jig when JIG_HOME not set", func(t *testing.T) {
+		// Save original value
+		orig := os.Getenv("JIG_HOME")
+		defer func() {
+			if orig != "" {
+				os.Setenv("JIG_HOME", orig)
+			} else {
+				os.Unsetenv("JIG_HOME")
+			}
+		}()
+
+		// Unset JIG_HOME
+		os.Unsetenv("JIG_HOME")
+
+		dir, err := JigDir()
+		if err != nil {
+			t.Fatalf("JigDir() error = %v", err)
+		}
+
+		home, _ := os.UserHomeDir()
+		expected := filepath.Join(home, ".jig")
+		if dir != expected {
+			t.Errorf("JigDir() = %q, want %q", dir, expected)
+		}
+	})
 }

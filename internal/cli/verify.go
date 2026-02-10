@@ -102,16 +102,6 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		runnerName = "claude"
 	}
 
-	// Get the runner
-	r, err := runner.Get(runnerName)
-	if err != nil {
-		return fmt.Errorf("runner not found: %s", runnerName)
-	}
-
-	if !r.Available() {
-		return fmt.Errorf("runner '%s' is not available (not installed or not in PATH)", runnerName)
-	}
-
 	if verifyNoLaunch {
 		printSuccess("Ready for verification")
 		fmt.Printf("\nIssue: %s\n", issueID)
@@ -119,6 +109,16 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		fmt.Printf("\nTo verify:\n")
 		fmt.Printf("  %s /jig:verify %s\n", runnerName, issueID)
 		return nil
+	}
+
+	// Get the runner (only needed if we're going to launch)
+	r, err := runner.Get(runnerName)
+	if err != nil {
+		return fmt.Errorf("runner not found: %s", runnerName)
+	}
+
+	if !r.Available() {
+		return fmt.Errorf("runner '%s' is not available (not installed or not in PATH)", runnerName)
 	}
 
 	if ui.IsInteractive() {

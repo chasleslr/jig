@@ -69,8 +69,12 @@ var (
 	cfgFile string
 )
 
-// JigDir returns the path to the jig configuration directory
+// JigDir returns the path to the jig configuration directory.
+// It checks the JIG_HOME environment variable first, then falls back to ~/.jig.
 func JigDir() (string, error) {
+	if jigHome := os.Getenv("JIG_HOME"); jigHome != "" {
+		return jigHome, nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get home directory: %w", err)
