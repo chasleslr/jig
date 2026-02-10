@@ -22,6 +22,21 @@ type CachedPlan struct {
 	IssueID   string     `json:"issue_id"`
 	CachedAt  time.Time  `json:"cached_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
+	SyncedAt  *time.Time `json:"synced_at,omitempty"`
+}
+
+// NeedsSync returns true if the plan should be synced to the tracker.
+// A plan needs sync if it has a linked issue and either:
+// - Has never been synced (SyncedAt is nil)
+// - Has been updated after the last sync
+func (cp *CachedPlan) NeedsSync() bool {
+	if cp.Plan == nil || cp.Plan.IssueID == "" {
+		return false
+	}
+	if cp.SyncedAt == nil {
+		return true
+	}
+	return cp.UpdatedAt.After(*cp.SyncedAt)
 }
 
 // NewCache creates a new cache instance
@@ -148,6 +163,81 @@ func (c *Cache) ListPlans() ([]*plan.Plan, error) {
 	}
 
 	return plans, nil
+}
+
+// GetCachedPlan retrieves the full cached plan with metadata
+func (c *Cache) GetCachedPlan(id string) (*CachedPlan, error) {
+	path := filepath.Join(c.dir, "plans", id+".json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read plan cache: %w", err)
+	}
+
+	var cached CachedPlan
+	if err := json.Unmarshal(data, &cached); err != nil {
+		return nil, fmt.Errorf("failed to parse plan cache: %w", err)
+	}
+
+	return &cached, nil
+}
+
+// ListCachedPlans returns all cached plans with full metadata
+func (c *Cache) ListCachedPlans() ([]*CachedPlan, error) {
+	planDir := filepath.Join(c.dir, "plans")
+	entries, err := os.ReadDir(planDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read plans directory: %w", err)
+	}
+
+	var plans []*CachedPlan
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+
+		id := entry.Name()[:len(entry.Name())-5] // Remove .json
+		cached, err := c.GetCachedPlan(id)
+		if err != nil {
+			continue
+		}
+		if cached != nil {
+			plans = append(plans, cached)
+		}
+	}
+
+	return plans, nil
+}
+
+// MarkPlanSynced updates the SyncedAt timestamp for a cached plan
+func (c *Cache) MarkPlanSynced(id string) error {
+	cached, err := c.GetCachedPlan(id)
+	if err != nil {
+		return fmt.Errorf("failed to get cached plan: %w", err)
+	}
+	if cached == nil {
+		return fmt.Errorf("plan not found: %s", id)
+	}
+
+	now := time.Now()
+	cached.SyncedAt = &now
+
+	data, err := json.MarshalIndent(cached, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to serialize plan: %w", err)
+	}
+
+	path := filepath.Join(c.dir, "plans", id+".json")
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("failed to write plan cache: %w", err)
+	}
+
+	return nil
 }
 
 // IssueMetadata stores additional metadata about an issue
