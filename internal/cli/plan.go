@@ -114,6 +114,25 @@ var planListCmd = &cobra.Command{
 	RunE:  runPlanList,
 }
 
+var planSyncCmd = &cobra.Command{
+	Use:   "sync [PLAN_ID]",
+	Short: "Sync plans to Linear",
+	Long: `Sync implementation plans to their associated Linear issues.
+
+Without arguments, shows an interactive multi-select of all unsynced plans.
+With PLAN_ID, syncs that specific plan immediately.
+
+Plans are considered "unsynced" if they have a linked issue and either:
+- Have never been synced
+- Have been updated after the last sync
+
+Examples:
+  jig plan sync                    # Interactive multi-select
+  jig plan sync NUM-123            # Sync specific plan`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runPlanSync,
+}
+
 func init() {
 	// Add flags to both planCmd and planNewCmd
 	planCmd.Flags().StringVarP(&planNewTitle, "title", "t", "", "plan title (optional, will be generated if not provided)")
@@ -131,6 +150,7 @@ func init() {
 	planCmd.AddCommand(planImportCmd)
 	planCmd.AddCommand(planShowCmd)
 	planCmd.AddCommand(planListCmd)
+	planCmd.AddCommand(planSyncCmd)
 
 	planSaveCmd.Flags().StringVar(&planSaveSessionID, "session", "", "session ID for tracking the saved plan (used by jig plan)")
 	planSaveCmd.Flags().BoolVar(&planSaveNoSync, "no-sync", false, "don't sync plan to Linear")
@@ -199,6 +219,10 @@ func runPlanSave(cmd *cobra.Command, args []string) error {
 		if err := syncPlanToLinear(ctx, cfg, p); err != nil {
 			printWarning(fmt.Sprintf("Could not sync to Linear: %v", err))
 		} else {
+			// Mark plan as synced to track the sync timestamp
+			if err := state.DefaultCache.MarkPlanSynced(p.ID); err != nil {
+				printWarning(fmt.Sprintf("Plan synced but failed to update sync timestamp: %v", err))
+			}
 			printSuccess(fmt.Sprintf("Plan synced to Linear issue %s", p.IssueID))
 		}
 	}
@@ -306,19 +330,19 @@ func runPlanList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize cache: %w", err)
 	}
 
-	plans, err := state.DefaultCache.ListPlans()
+	cachedPlans, err := state.DefaultCache.ListCachedPlans()
 	if err != nil {
 		return fmt.Errorf("failed to list plans: %w", err)
 	}
 
-	if len(plans) == 0 {
+	if len(cachedPlans) == 0 {
 		fmt.Println("No plans cached.")
 		return nil
 	}
 
 	// If interactive, show table with selection
 	if ui.IsInteractive() {
-		selectedPlan, ok, err := ui.RunPlanTable("Cached plans:", plans)
+		selectedPlan, ok, err := ui.RunCachedPlanTable("Cached plans:", cachedPlans)
 		if err != nil {
 			return fmt.Errorf("failed to display plans: %w", err)
 		}
@@ -330,16 +354,29 @@ func runPlanList(cmd *cobra.Command, args []string) error {
 	}
 
 	// Non-interactive: print plain text list
-	fmt.Printf("Cached plans (%d):\n\n", len(plans))
-	for _, p := range plans {
-		status := string(p.Status)
+	fmt.Printf("Cached plans (%d):\n\n", len(cachedPlans))
+	for _, cp := range cachedPlans {
+		if cp.Plan == nil {
+			continue
+		}
+		status := string(cp.Plan.Status)
 		if status == "" {
 			status = "draft"
 		}
 
-		fmt.Printf("  %s\n", p.ID)
-		fmt.Printf("    Title: %s\n", p.Title)
+		syncStatus := "-"
+		if cp.Plan.IssueID != "" {
+			if cp.NeedsSync() {
+				syncStatus = "no"
+			} else {
+				syncStatus = "yes"
+			}
+		}
+
+		fmt.Printf("  %s\n", cp.Plan.ID)
+		fmt.Printf("    Title: %s\n", cp.Plan.Title)
 		fmt.Printf("    Status: %s\n", status)
+		fmt.Printf("    Synced: %s\n", syncStatus)
 		fmt.Println()
 	}
 
@@ -804,4 +841,198 @@ func getLinearClientWithStore(cfg *config.Config, newStore func() (*config.Store
 	}
 
 	return linear.NewClient(apiKey, cfg.Linear.TeamID, cfg.Linear.DefaultProject), nil
+}
+
+func runPlanSync(cmd *cobra.Command, args []string) error {
+	ctx := context.Background()
+	cfg := config.Get()
+
+	// Validate that Linear is configured as the tracker
+	if cfg.Default.Tracker != "linear" {
+		return fmt.Errorf("Linear is not configured as the tracker (current: %s)", cfg.Default.Tracker)
+	}
+
+	// Initialize cache
+	if err := state.Init(); err != nil {
+		return fmt.Errorf("failed to initialize cache: %w", err)
+	}
+
+	// If a plan ID is provided, sync that specific plan
+	if len(args) > 0 {
+		return syncSinglePlan(ctx, cfg, args[0])
+	}
+
+	// Interactive mode: show multi-select of unsynced plans
+	if !ui.IsInteractive() {
+		return fmt.Errorf("interactive mode required (no plan ID provided)")
+	}
+
+	return syncPlansInteractive(ctx, cfg)
+}
+
+// syncSinglePlan syncs a specific plan by ID
+func syncSinglePlan(ctx context.Context, cfg *config.Config, planID string) error {
+	syncer, err := getLinearPlanSyncer(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to get syncer: %w", err)
+	}
+	labelName := cfg.Linear.GetPlanLabelName()
+
+	deps := planSyncDeps{
+		getCachedPlan:  state.DefaultCache.GetCachedPlan,
+		markPlanSynced: state.DefaultCache.MarkPlanSynced,
+		syncPlan: func(ctx context.Context, p *plan.Plan) error {
+			return syncPlanWithSyncer(ctx, syncer, p, labelName)
+		},
+	}
+
+	return syncSinglePlanWithDeps(ctx, planID, deps)
+}
+
+// planSyncDeps holds dependencies for sync operations (for testability)
+type planSyncDeps struct {
+	getCachedPlan  func(id string) (*state.CachedPlan, error)
+	markPlanSynced func(id string) error
+	syncPlan       func(ctx context.Context, p *plan.Plan) error
+}
+
+// syncSinglePlanWithDeps syncs a specific plan using injected dependencies
+func syncSinglePlanWithDeps(ctx context.Context, planID string, deps planSyncDeps) error {
+	cached, err := deps.getCachedPlan(planID)
+	if err != nil {
+		return fmt.Errorf("failed to get plan: %w", err)
+	}
+	if cached == nil {
+		return fmt.Errorf("plan not found: %s", planID)
+	}
+
+	if cached.Plan == nil || cached.Plan.IssueID == "" {
+		return fmt.Errorf("plan has no linked issue")
+	}
+
+	// Sync to Linear
+	if err := deps.syncPlan(ctx, cached.Plan); err != nil {
+		return fmt.Errorf("failed to sync plan: %w", err)
+	}
+
+	// Mark as synced
+	if err := deps.markPlanSynced(planID); err != nil {
+		printWarning(fmt.Sprintf("Plan synced but failed to update sync timestamp: %v", err))
+	}
+
+	printSuccess(fmt.Sprintf("Plan synced to Linear issue %s", cached.Plan.IssueID))
+	return nil
+}
+
+// syncPlansInteractive shows an interactive multi-select of unsynced plans
+func syncPlansInteractive(ctx context.Context, cfg *config.Config) error {
+	// Get all cached plans
+	cachedPlans, err := state.DefaultCache.ListCachedPlans()
+	if err != nil {
+		return fmt.Errorf("failed to list plans: %w", err)
+	}
+
+	// Filter to plans that need sync
+	var unsyncedPlans []*state.CachedPlan
+	for _, cp := range cachedPlans {
+		if cp.NeedsSync() {
+			unsyncedPlans = append(unsyncedPlans, cp)
+		}
+	}
+
+	if len(unsyncedPlans) == 0 {
+		fmt.Println("No unsynced plans found.")
+		return nil
+	}
+
+	// Build options for multi-select
+	options := make([]ui.SelectOption, len(unsyncedPlans))
+	for i, cp := range unsyncedPlans {
+		syncStatus := "never synced"
+		if cp.SyncedAt != nil {
+			syncStatus = "updated since last sync"
+		}
+		options[i] = ui.SelectOption{
+			Label:       fmt.Sprintf("%s - %s", cp.Plan.ID, cp.Plan.Title),
+			Value:       cp.Plan.ID,
+			Description: fmt.Sprintf("Issue: %s (%s)", cp.Plan.IssueID, syncStatus),
+		}
+	}
+
+	// Show multi-select
+	selectedIDs, err := ui.RunMultiSelect("Select plans to sync:", options)
+	if err != nil {
+		return fmt.Errorf("failed to run multi-select: %w", err)
+	}
+
+	if len(selectedIDs) == 0 {
+		fmt.Println("No plans selected.")
+		return nil
+	}
+
+	// Build a map of selected plan IDs to cached plans for syncing
+	idToPlan := make(map[string]*state.CachedPlan)
+	for _, cp := range unsyncedPlans {
+		idToPlan[cp.Plan.ID] = cp
+	}
+
+	// Sync selected plans
+	syncer, err := getLinearPlanSyncer(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to get syncer: %w", err)
+	}
+	labelName := cfg.Linear.GetPlanLabelName()
+
+	deps := planSyncDeps{
+		getCachedPlan:  state.DefaultCache.GetCachedPlan,
+		markPlanSynced: state.DefaultCache.MarkPlanSynced,
+		syncPlan: func(ctx context.Context, p *plan.Plan) error {
+			return syncPlanWithSyncer(ctx, syncer, p, labelName)
+		},
+	}
+
+	return syncSelectedPlansWithDeps(ctx, selectedIDs, idToPlan, deps)
+}
+
+// syncSelectedPlansWithDeps syncs the selected plans using injected dependencies
+func syncSelectedPlansWithDeps(ctx context.Context, planIDs []string, idToPlan map[string]*state.CachedPlan, deps planSyncDeps) error {
+	var successCount int
+	var failures []string
+
+	for _, planID := range planIDs {
+		cp, ok := idToPlan[planID]
+		if !ok {
+			failures = append(failures, fmt.Sprintf("%s: plan not found", planID))
+			continue
+		}
+
+		// Sync to Linear
+		if err := deps.syncPlan(ctx, cp.Plan); err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", planID, err))
+			continue
+		}
+
+		// Mark as synced
+		if err := deps.markPlanSynced(planID); err != nil {
+			printWarning(fmt.Sprintf("Plan %s synced but failed to update sync timestamp: %v", planID, err))
+		}
+
+		successCount++
+		printSuccess(fmt.Sprintf("Synced %s to issue %s", planID, cp.Plan.IssueID))
+	}
+
+	// Report results
+	if successCount > 0 {
+		fmt.Printf("\nSuccessfully synced %d plan(s)\n", successCount)
+	}
+
+	if len(failures) > 0 {
+		fmt.Printf("\nFailed to sync %d plan(s):\n", len(failures))
+		for _, f := range failures {
+			fmt.Printf("  - %s\n", f)
+		}
+		return fmt.Errorf("failed to sync %d plan(s)", len(failures))
+	}
+
+	return nil
 }
