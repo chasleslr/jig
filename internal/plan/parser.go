@@ -14,6 +14,7 @@ import (
 // Frontmatter represents the YAML frontmatter of a plan document
 type Frontmatter struct {
 	ID        string    `yaml:"id"`
+	IssueID   string    `yaml:"issue_id,omitempty"`
 	Title     string    `yaml:"title"`
 	Status    Status    `yaml:"status"`
 	Created   string    `yaml:"created"`
@@ -46,6 +47,7 @@ func Parse(data []byte) (*Plan, error) {
 
 	plan := &Plan{
 		ID:               fm.ID,
+		IssueID:          fm.IssueID,
 		Title:            fm.Title,
 		Status:           fm.Status,
 		Author:           fm.Author,
@@ -229,6 +231,7 @@ func Serialize(plan *Plan) ([]byte, error) {
 	// Write frontmatter with current field values
 	fm := Frontmatter{
 		ID:        plan.ID,
+		IssueID:   plan.IssueID,
 		Title:     plan.Title,
 		Status:    plan.Status,
 		Created:   plan.Created.Format("2006-01-02T15:04:05Z"),

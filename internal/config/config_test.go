@@ -68,6 +68,39 @@ func TestLinearConfig_GetPlanLabelName(t *testing.T) {
 	}
 }
 
+func TestLinearConfig_ShouldCreateIssueOnSave(t *testing.T) {
+	tests := []struct {
+		name     string
+		config   LinearConfig
+		expected bool
+	}{
+		{
+			name:     "nil CreateIssueOnSave defaults to true",
+			config:   LinearConfig{CreateIssueOnSave: nil},
+			expected: true,
+		},
+		{
+			name:     "explicit true returns true",
+			config:   LinearConfig{CreateIssueOnSave: boolPtr(true)},
+			expected: true,
+		},
+		{
+			name:     "explicit false returns false",
+			config:   LinearConfig{CreateIssueOnSave: boolPtr(false)},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.config.ShouldCreateIssueOnSave()
+			if got != tt.expected {
+				t.Errorf("ShouldCreateIssueOnSave() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
 // boolPtr returns a pointer to a bool value
 func boolPtr(b bool) *bool {
 	return &b

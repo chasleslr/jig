@@ -175,15 +175,27 @@ func runPlanSave(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize cache: %w", err)
 	}
 
-	// Save to cache
+	cfg := config.Get()
+	ctx := context.Background()
+
+	// Create Linear issue if plan has no linked issue and creation is enabled
+	if !planSaveNoSync && shouldCreateIssueForPlan(cfg, p) {
+		issueID, err := createIssueForPlan(ctx, cfg, p)
+		if err != nil {
+			printWarning(fmt.Sprintf("Could not create Linear issue: %v", err))
+		} else {
+			p.IssueID = issueID
+			printSuccess(fmt.Sprintf("Created Linear issue %s", issueID))
+		}
+	}
+
+	// Save to cache (with potentially updated IssueID)
 	if err := state.DefaultCache.SavePlan(p); err != nil {
 		return fmt.Errorf("failed to save plan: %w", err)
 	}
 
-	// Sync to Linear if applicable
-	cfg := config.Get()
+	// Sync to Linear if applicable (adds comment to existing linked issue)
 	if !planSaveNoSync && shouldSyncToLinear(cfg, p) {
-		ctx := context.Background()
 		if err := syncPlanToLinear(ctx, cfg, p); err != nil {
 			printWarning(fmt.Sprintf("Could not sync to Linear: %v", err))
 		} else {
@@ -694,6 +706,73 @@ func syncPlanWithSyncer(ctx context.Context, syncer tracker.PlanSyncer, p *plan.
 
 // getLinearPlanSyncer creates a Linear client configured as a PlanSyncer
 func getLinearPlanSyncer(cfg *config.Config) (tracker.PlanSyncer, error) {
+	store, err := config.NewStore()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get config store: %w", err)
+	}
+	apiKey, err := store.GetLinearAPIKey()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get Linear API key: %w", err)
+	}
+	if apiKey == "" {
+		apiKey = cfg.Linear.APIKey
+	}
+	if apiKey == "" {
+		return nil, fmt.Errorf("Linear API key not configured")
+	}
+
+	return linear.NewClient(apiKey, cfg.Linear.TeamID, cfg.Linear.DefaultProject), nil
+}
+
+// shouldCreateIssueForPlan returns true if a new Linear issue should be created for this plan
+func shouldCreateIssueForPlan(cfg *config.Config, p *plan.Plan) bool {
+	// Don't create if plan already has a linked issue
+	if p.HasLinkedIssue() {
+		return false
+	}
+
+	// Check if Linear is the configured tracker
+	if cfg.Default.Tracker != "linear" {
+		return false
+	}
+
+	// Check if issue creation is enabled in config
+	if !cfg.Linear.ShouldCreateIssueOnSave() {
+		return false
+	}
+
+	// Check if Linear API key is configured
+	store, err := config.NewStore()
+	if err != nil {
+		return false
+	}
+	apiKey, _ := store.GetLinearAPIKey()
+	if apiKey == "" {
+		apiKey = cfg.Linear.APIKey
+	}
+	if apiKey == "" {
+		return false
+	}
+
+	return true
+}
+
+// createIssueForPlan creates a new Linear issue from the plan and returns the issue identifier
+func createIssueForPlan(ctx context.Context, cfg *config.Config, p *plan.Plan) (string, error) {
+	client, err := getLinearClient(cfg)
+	if err != nil {
+		return "", err
+	}
+
+	issue, err := client.CreateIssueFromPlan(ctx, p)
+	if err != nil {
+		return "", err
+	}
+	return issue.Identifier, nil
+}
+
+// getLinearClient creates a Linear client
+func getLinearClient(cfg *config.Config) (*linear.Client, error) {
 	store, err := config.NewStore()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get config store: %w", err)

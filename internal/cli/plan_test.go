@@ -1121,6 +1121,59 @@ Test phase.
 	}
 }
 
+func TestShouldCreateIssueForPlan(t *testing.T) {
+	t.Run("returns false when plan already has linked issue", func(t *testing.T) {
+		cfg := &config.Config{
+			Default: config.DefaultConfig{
+				Tracker: "linear",
+			},
+			Linear: config.LinearConfig{},
+		}
+		p := &plan.Plan{IssueID: "NUM-41"} // Already has linked issue
+
+		result := shouldCreateIssueForPlan(cfg, p)
+		if result {
+			t.Error("expected false when plan already has linked issue")
+		}
+	})
+
+	t.Run("returns false when tracker is not linear", func(t *testing.T) {
+		cfg := &config.Config{
+			Default: config.DefaultConfig{
+				Tracker: "github", // Not linear
+			},
+		}
+		p := &plan.Plan{IssueID: ""} // No linked issue
+
+		result := shouldCreateIssueForPlan(cfg, p)
+		if result {
+			t.Error("expected false when tracker is not linear")
+		}
+	})
+
+	t.Run("returns false when issue creation is disabled", func(t *testing.T) {
+		createDisabled := false
+		cfg := &config.Config{
+			Default: config.DefaultConfig{
+				Tracker: "linear",
+			},
+			Linear: config.LinearConfig{
+				CreateIssueOnSave: &createDisabled,
+			},
+		}
+		p := &plan.Plan{IssueID: ""} // No linked issue
+
+		result := shouldCreateIssueForPlan(cfg, p)
+		if result {
+			t.Error("expected false when issue creation is disabled")
+		}
+	})
+
+	// Note: Testing "no API key configured" is skipped because it depends on
+	// the system's ~/.jig/.credentials file which may have real credentials.
+	// The API key check path is tested indirectly through integration tests.
+}
+
 func TestShouldSyncToLinear(t *testing.T) {
 	t.Run("returns false when tracker is not linear", func(t *testing.T) {
 		cfg := &config.Config{

@@ -357,6 +357,124 @@ func TestGetIssueLabelIDs(t *testing.T) {
 	})
 }
 
+func TestCreateIssueFromPlan(t *testing.T) {
+	t.Run("creates issue from plan successfully", func(t *testing.T) {
+		var capturedTitle string
+		var capturedDescription string
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var req GraphQLRequest
+			json.NewDecoder(r.Body).Decode(&req)
+
+			if input, ok := req.Variables["input"].(map[string]interface{}); ok {
+				if title, ok := input["title"].(string); ok {
+					capturedTitle = title
+				}
+				if desc, ok := input["description"].(string); ok {
+					capturedDescription = desc
+				}
+			}
+
+			response := GraphQLResponse{
+				Data: json.RawMessage(`{
+					"issueCreate": {
+						"success": true,
+						"issue": {
+							"id": "issue-uuid-123",
+							"identifier": "NUM-99",
+							"title": "Test Plan Title",
+							"state": {"id": "state-1", "name": "Todo", "type": "unstarted"},
+							"team": {"id": "team-123", "key": "NUM"}
+						}
+					}
+				}`),
+			}
+			json.NewEncoder(w).Encode(response)
+		}))
+		defer server.Close()
+
+		client := newTestClient(server.URL)
+		p := &plan.Plan{
+			ID:               "PLAN-123",
+			Title:            "Test Plan Title",
+			ProblemStatement: "This is the problem we need to solve.",
+			ProposedSolution: "Here is how we plan to solve it.",
+		}
+
+		issue, err := client.CreateIssueFromPlan(context.Background(), p)
+		if err != nil {
+			t.Fatalf("CreateIssueFromPlan failed: %v", err)
+		}
+
+		// Verify the created issue
+		if issue.Identifier != "NUM-99" {
+			t.Errorf("expected identifier 'NUM-99', got '%s'", issue.Identifier)
+		}
+
+		// Verify the title was passed correctly
+		if capturedTitle != "Test Plan Title" {
+			t.Errorf("expected title 'Test Plan Title', got '%s'", capturedTitle)
+		}
+
+		// Verify the description includes problem statement
+		if !strings.Contains(capturedDescription, "Problem Statement") {
+			t.Error("expected description to contain 'Problem Statement'")
+		}
+		if !strings.Contains(capturedDescription, "This is the problem we need to solve.") {
+			t.Error("expected description to contain problem statement content")
+		}
+
+		// Verify the description includes proposed solution
+		if !strings.Contains(capturedDescription, "Proposed Solution") {
+			t.Error("expected description to contain 'Proposed Solution'")
+		}
+		if !strings.Contains(capturedDescription, "Here is how we plan to solve it.") {
+			t.Error("expected description to contain proposed solution content")
+		}
+	})
+
+	t.Run("returns error when plan has no title", func(t *testing.T) {
+		client := NewClient("test-key", "team-id", "")
+		p := &plan.Plan{
+			ID:               "PLAN-123",
+			Title:            "", // Empty title
+			ProblemStatement: "Problem",
+			ProposedSolution: "Solution",
+		}
+
+		_, err := client.CreateIssueFromPlan(context.Background(), p)
+		if err == nil {
+			t.Error("expected error when plan has no title")
+		}
+		if !strings.Contains(err.Error(), "plan title is required") {
+			t.Errorf("expected 'plan title is required' error, got: %v", err)
+		}
+	})
+
+	t.Run("handles API error gracefully", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			response := GraphQLResponse{
+				Errors: []GraphQLError{
+					{Message: "Internal server error"},
+				},
+			}
+			json.NewEncoder(w).Encode(response)
+		}))
+		defer server.Close()
+
+		client := newTestClient(server.URL)
+		p := &plan.Plan{
+			ID:    "PLAN-123",
+			Title: "Test Plan",
+		}
+
+		_, err := client.CreateIssueFromPlan(context.Background(), p)
+		if err == nil {
+			t.Error("expected error on API failure")
+		}
+	})
+}
+
 func TestSyncPlanToIssue(t *testing.T) {
 	t.Run("returns error when plan has no linked issue", func(t *testing.T) {
 		client := NewClient("test-key", "team-id", "")

@@ -11,6 +11,20 @@ import (
 	"github.com/charleslr/jig/internal/tracker"
 )
 
+// CreateIssueFromPlan creates a new Linear issue from a plan that has no linked issue.
+// Returns the created issue with its identifier (e.g., "NUM-123").
+func (c *Client) CreateIssueFromPlan(ctx context.Context, p *plan.Plan) (*tracker.Issue, error) {
+	if p.Title == "" {
+		return nil, fmt.Errorf("plan title is required")
+	}
+
+	return c.CreateIssue(ctx, &tracker.Issue{
+		Title:       p.Title,
+		Description: buildPlanDescription(p),
+		TeamID:      c.teamID,
+	})
+}
+
 // SyncPlan synchronizes a plan to Linear, creating/updating the main issue
 func (c *Client) SyncPlan(ctx context.Context, p *plan.Plan) error {
 	// Check if main issue exists
