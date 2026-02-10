@@ -15,7 +15,7 @@ type LinearLabel struct {
 // GetTeamLabels retrieves all labels for a team
 func (c *Client) GetTeamLabels(ctx context.Context, teamID string) ([]LinearLabel, error) {
 	query := `
-		query GetTeamLabels($teamId: ID!) {
+		query GetTeamLabels($teamId: String!) {
 			team(id: $teamId) {
 				labels {
 					nodes {
