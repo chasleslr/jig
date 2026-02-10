@@ -473,6 +473,111 @@ func TestCreateIssueFromPlan(t *testing.T) {
 			t.Error("expected error on API failure")
 		}
 	})
+
+	t.Run("creates issue with empty problem statement", func(t *testing.T) {
+		var capturedDescription string
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var req GraphQLRequest
+			json.NewDecoder(r.Body).Decode(&req)
+
+			if input, ok := req.Variables["input"].(map[string]interface{}); ok {
+				if desc, ok := input["description"].(string); ok {
+					capturedDescription = desc
+				}
+			}
+
+			response := GraphQLResponse{
+				Data: json.RawMessage(`{
+					"issueCreate": {
+						"success": true,
+						"issue": {
+							"id": "issue-uuid-123",
+							"identifier": "NUM-100",
+							"title": "Test Plan",
+							"state": {"id": "state-1", "name": "Todo", "type": "unstarted"},
+							"team": {"id": "team-123", "key": "NUM"}
+						}
+					}
+				}`),
+			}
+			json.NewEncoder(w).Encode(response)
+		}))
+		defer server.Close()
+
+		client := newTestClient(server.URL)
+		p := &plan.Plan{
+			ID:               "PLAN-123",
+			Title:            "Test Plan",
+			ProblemStatement: "", // Empty problem statement
+			ProposedSolution: "This is the solution.",
+		}
+
+		issue, err := client.CreateIssueFromPlan(context.Background(), p)
+		if err != nil {
+			t.Fatalf("CreateIssueFromPlan failed: %v", err)
+		}
+
+		if issue.Identifier != "NUM-100" {
+			t.Errorf("expected identifier 'NUM-100', got '%s'", issue.Identifier)
+		}
+
+		// Description should only contain proposed solution
+		if strings.Contains(capturedDescription, "Problem Statement") {
+			t.Error("description should not contain 'Problem Statement' when empty")
+		}
+		if !strings.Contains(capturedDescription, "Proposed Solution") {
+			t.Error("description should contain 'Proposed Solution'")
+		}
+	})
+
+	t.Run("uses client teamID when creating issue", func(t *testing.T) {
+		var capturedTeamID string
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var req GraphQLRequest
+			json.NewDecoder(r.Body).Decode(&req)
+
+			if input, ok := req.Variables["input"].(map[string]interface{}); ok {
+				if teamID, ok := input["teamId"].(string); ok {
+					capturedTeamID = teamID
+				}
+			}
+
+			response := GraphQLResponse{
+				Data: json.RawMessage(`{
+					"issueCreate": {
+						"success": true,
+						"issue": {
+							"id": "issue-uuid-123",
+							"identifier": "NUM-101",
+							"title": "Test Plan",
+							"state": {"id": "state-1", "name": "Todo", "type": "unstarted"},
+							"team": {"id": "team-custom", "key": "NUM"}
+						}
+					}
+				}`),
+			}
+			json.NewEncoder(w).Encode(response)
+		}))
+		defer server.Close()
+
+		// Create client with specific teamID
+		client := newTestClientWithTeam(server.URL, "team-custom-123")
+		p := &plan.Plan{
+			ID:    "PLAN-123",
+			Title: "Test Plan",
+		}
+
+		_, err := client.CreateIssueFromPlan(context.Background(), p)
+		if err != nil {
+			t.Fatalf("CreateIssueFromPlan failed: %v", err)
+		}
+
+		if capturedTeamID != "team-custom-123" {
+			t.Errorf("expected teamId 'team-custom-123', got '%s'", capturedTeamID)
+		}
+	})
 }
 
 func TestSyncPlanToIssue(t *testing.T) {
