@@ -502,6 +502,152 @@ This should be preserved.
 	}
 }
 
+func TestParseWithIssueID(t *testing.T) {
+	content := `---
+id: test-plan
+issue_id: NUM-42
+title: Test Plan With Issue
+status: draft
+author: testuser
+---
+
+# Test Plan With Issue
+
+## Problem Statement
+
+This is the problem statement.
+
+## Proposed Solution
+
+This is the proposed solution.
+`
+
+	plan, err := Parse([]byte(content))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	if plan.IssueID != "NUM-42" {
+		t.Errorf("expected IssueID 'NUM-42', got '%s'", plan.IssueID)
+	}
+	if plan.ID != "test-plan" {
+		t.Errorf("expected ID 'test-plan', got '%s'", plan.ID)
+	}
+}
+
+func TestParseWithoutIssueID(t *testing.T) {
+	content := `---
+id: test-plan
+title: Test Plan Without Issue
+status: draft
+author: testuser
+---
+
+# Test Plan Without Issue
+
+## Problem Statement
+
+This is the problem statement.
+
+## Proposed Solution
+
+This is the proposed solution.
+`
+
+	plan, err := Parse([]byte(content))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	if plan.IssueID != "" {
+		t.Errorf("expected empty IssueID, got '%s'", plan.IssueID)
+	}
+}
+
+func TestSerializeWithIssueID(t *testing.T) {
+	content := `---
+id: test-plan
+issue_id: NUM-123
+title: Test Plan
+status: draft
+author: testuser
+---
+
+# Test Plan
+
+## Problem Statement
+
+Problem.
+
+## Proposed Solution
+
+Solution.
+`
+
+	// Parse the plan
+	plan, err := Parse([]byte(content))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	// Verify IssueID was parsed
+	if plan.IssueID != "NUM-123" {
+		t.Errorf("expected IssueID 'NUM-123', got '%s'", plan.IssueID)
+	}
+
+	// Serialize it back
+	serialized, err := Serialize(plan)
+	if err != nil {
+		t.Fatalf("Serialize() error = %v", err)
+	}
+
+	// Verify IssueID is in the serialized output
+	if !strings.Contains(string(serialized), "issue_id: NUM-123") {
+		t.Error("serialized content should contain 'issue_id: NUM-123'")
+	}
+}
+
+func TestSerializePreservesIssueIDWhenModified(t *testing.T) {
+	// Start with a plan without IssueID
+	content := `---
+id: test-plan
+title: Test Plan
+status: draft
+author: testuser
+---
+
+# Test Plan
+
+## Problem Statement
+
+Problem.
+
+## Proposed Solution
+
+Solution.
+`
+
+	// Parse the plan
+	plan, err := Parse([]byte(content))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	// Set the IssueID (simulating auto-creation)
+	plan.IssueID = "NUM-999"
+
+	// Serialize it back
+	serialized, err := Serialize(plan)
+	if err != nil {
+		t.Fatalf("Serialize() error = %v", err)
+	}
+
+	// Verify the new IssueID is in the serialized output
+	if !strings.Contains(string(serialized), "issue_id: NUM-999") {
+		t.Error("serialized content should contain 'issue_id: NUM-999' after modification")
+	}
+}
+
 func TestExtractBodyFromRawContent(t *testing.T) {
 	tests := []struct {
 		name        string

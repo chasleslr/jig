@@ -5,10 +5,49 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
 func TestGetTeamLabels(t *testing.T) {
+	t.Run("uses String! type for teamId parameter", func(t *testing.T) {
+		var capturedRequest GraphQLRequest
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			json.NewDecoder(r.Body).Decode(&capturedRequest)
+			response := GraphQLResponse{
+				Data: json.RawMessage(`{
+					"team": {
+						"labels": {
+							"nodes": []
+						}
+					}
+				}`),
+			}
+			json.NewEncoder(w).Encode(response)
+		}))
+		defer server.Close()
+
+		client := newTestClient(server.URL)
+		_, err := client.GetTeamLabels(context.Background(), "team-123")
+		if err != nil {
+			t.Fatalf("GetTeamLabels failed: %v", err)
+		}
+
+		// Verify the query uses String! type (not ID!)
+		if capturedRequest.Query == "" {
+			t.Fatal("expected query to be captured")
+		}
+		if !strings.Contains(capturedRequest.Query, "$teamId: String!") {
+			t.Errorf("query should use 'String!' type for teamId, got: %s", capturedRequest.Query)
+		}
+
+		// Verify teamId variable is passed correctly
+		if capturedRequest.Variables["teamId"] != "team-123" {
+			t.Errorf("expected teamId = 'team-123', got %v", capturedRequest.Variables["teamId"])
+		}
+	})
+
 	t.Run("returns labels from team", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			response := GraphQLResponse{

@@ -185,6 +185,16 @@ func newTestClient(serverURL string) *Client {
 	return client
 }
 
+// newTestClientWithTeam creates a client with a specific teamID that points to a test server
+func newTestClientWithTeam(serverURL, teamID string) *Client {
+	client := NewClient("test-api-key", teamID, "")
+	// Override the HTTP client to use our test server
+	client.httpClient = &http.Client{
+		Transport: &testTransport{baseURL: serverURL},
+	}
+	return client
+}
+
 // testTransport redirects requests to the test server
 type testTransport struct {
 	baseURL string

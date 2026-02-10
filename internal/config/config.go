@@ -27,11 +27,12 @@ type DefaultConfig struct {
 
 // LinearConfig holds Linear API configuration
 type LinearConfig struct {
-	APIKey         string `mapstructure:"api_key"`
-	TeamID         string `mapstructure:"team_id"`
-	DefaultProject string `mapstructure:"default_project"`
-	SyncPlanOnSave *bool  `mapstructure:"sync_plan_on_save"` // default: true
-	PlanLabelName  string `mapstructure:"plan_label_name"`   // default: "jig-plan"
+	APIKey            string `mapstructure:"api_key"`
+	TeamID            string `mapstructure:"team_id"`
+	DefaultProject    string `mapstructure:"default_project"`
+	SyncPlanOnSave    *bool  `mapstructure:"sync_plan_on_save"`    // default: true
+	CreateIssueOnSave *bool  `mapstructure:"create_issue_on_save"` // default: true
+	PlanLabelName     string `mapstructure:"plan_label_name"`      // default: "jig-plan"
 }
 
 // GitHubConfig holds GitHub configuration (uses gh CLI auth)
@@ -144,6 +145,7 @@ func setDefaults() {
 
 	// Default Linear sync settings
 	viper.SetDefault("linear.sync_plan_on_save", true)
+	viper.SetDefault("linear.create_issue_on_save", true)
 	viper.SetDefault("linear.plan_label_name", "jig-plan")
 
 	jigDir, _ := JigDir()
@@ -229,4 +231,12 @@ func (c *LinearConfig) GetPlanLabelName() string {
 		return "jig-plan" // default
 	}
 	return c.PlanLabelName
+}
+
+// ShouldCreateIssueOnSave returns whether a Linear issue should be auto-created when saving a plan without a linked issue
+func (c *LinearConfig) ShouldCreateIssueOnSave() bool {
+	if c.CreateIssueOnSave == nil {
+		return true // default
+	}
+	return *c.CreateIssueOnSave
 }

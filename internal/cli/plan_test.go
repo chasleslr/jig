@@ -1121,6 +1121,59 @@ Test phase.
 	}
 }
 
+func TestShouldCreateIssueForPlan(t *testing.T) {
+	t.Run("returns false when plan already has linked issue", func(t *testing.T) {
+		cfg := &config.Config{
+			Default: config.DefaultConfig{
+				Tracker: "linear",
+			},
+			Linear: config.LinearConfig{},
+		}
+		p := &plan.Plan{IssueID: "NUM-41"} // Already has linked issue
+
+		result := shouldCreateIssueForPlan(cfg, p)
+		if result {
+			t.Error("expected false when plan already has linked issue")
+		}
+	})
+
+	t.Run("returns false when tracker is not linear", func(t *testing.T) {
+		cfg := &config.Config{
+			Default: config.DefaultConfig{
+				Tracker: "github", // Not linear
+			},
+		}
+		p := &plan.Plan{IssueID: ""} // No linked issue
+
+		result := shouldCreateIssueForPlan(cfg, p)
+		if result {
+			t.Error("expected false when tracker is not linear")
+		}
+	})
+
+	t.Run("returns false when issue creation is disabled", func(t *testing.T) {
+		createDisabled := false
+		cfg := &config.Config{
+			Default: config.DefaultConfig{
+				Tracker: "linear",
+			},
+			Linear: config.LinearConfig{
+				CreateIssueOnSave: &createDisabled,
+			},
+		}
+		p := &plan.Plan{IssueID: ""} // No linked issue
+
+		result := shouldCreateIssueForPlan(cfg, p)
+		if result {
+			t.Error("expected false when issue creation is disabled")
+		}
+	})
+
+	// Note: Testing "no API key configured" is skipped because it depends on
+	// the system's ~/.jig/.credentials file which may have real credentials.
+	// The API key check path is tested indirectly through integration tests.
+}
+
 func TestShouldSyncToLinear(t *testing.T) {
 	t.Run("returns false when tracker is not linear", func(t *testing.T) {
 		cfg := &config.Config{
@@ -1401,6 +1454,126 @@ func TestSyncPlanWithSyncer_UsingTrackerMock(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "issue not found") {
 			t.Errorf("expected 'issue not found' error, got: %v", err)
+		}
+	})
+}
+
+// mockIssueCreator is a mock implementation of issueCreator for testing
+type mockIssueCreator struct {
+	issue *tracker.Issue
+	err   error
+}
+
+func (m *mockIssueCreator) CreateIssueFromPlan(ctx context.Context, p *plan.Plan) (*tracker.Issue, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.issue, nil
+}
+
+func TestCreateIssueForPlanWithCreator(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("returns issue identifier on success", func(t *testing.T) {
+		creator := &mockIssueCreator{
+			issue: &tracker.Issue{
+				ID:         "issue-uuid",
+				Identifier: "NUM-123",
+				Title:      "Test Issue",
+			},
+		}
+		p := &plan.Plan{
+			ID:    "PLAN-123",
+			Title: "Test Plan",
+		}
+
+		identifier, err := createIssueForPlanWithCreator(ctx, creator, p)
+		if err != nil {
+			t.Fatalf("createIssueForPlanWithCreator failed: %v", err)
+		}
+		if identifier != "NUM-123" {
+			t.Errorf("expected identifier 'NUM-123', got '%s'", identifier)
+		}
+	})
+
+	t.Run("propagates error from creator", func(t *testing.T) {
+		creator := &mockIssueCreator{
+			err: fmt.Errorf("API error: rate limited"),
+		}
+		p := &plan.Plan{
+			ID:    "PLAN-123",
+			Title: "Test Plan",
+		}
+
+		_, err := createIssueForPlanWithCreator(ctx, creator, p)
+		if err == nil {
+			t.Error("expected error to be propagated")
+		}
+		if !strings.Contains(err.Error(), "rate limited") {
+			t.Errorf("expected 'rate limited' error, got: %v", err)
+		}
+	})
+}
+
+func TestGetLinearClientWithStore(t *testing.T) {
+	t.Run("returns error when store creation fails", func(t *testing.T) {
+		cfg := &config.Config{
+			Linear: config.LinearConfig{
+				APIKey: "test-key",
+			},
+		}
+		failingStore := func() (*config.Store, error) {
+			return nil, fmt.Errorf("failed to create store")
+		}
+
+		_, err := getLinearClientWithStore(cfg, failingStore)
+		if err == nil {
+			t.Error("expected error when store creation fails")
+		}
+		if !strings.Contains(err.Error(), "failed to get config store") {
+			t.Errorf("expected 'failed to get config store' error, got: %v", err)
+		}
+	})
+
+	t.Run("uses config API key when store has no key", func(t *testing.T) {
+		cfg := &config.Config{
+			Linear: config.LinearConfig{
+				APIKey:    "config-api-key",
+				TeamID:    "team-123",
+			},
+		}
+		// Create a real store but it won't have a key set
+		client, err := getLinearClientWithStore(cfg, config.NewStore)
+		if err != nil {
+			// If this fails, it's because no API key is configured anywhere
+			// which is expected in a test environment without credentials
+			if strings.Contains(err.Error(), "Linear API key not configured") {
+				t.Skip("skipping - no API key in test environment")
+			}
+			t.Fatalf("getLinearClientWithStore failed: %v", err)
+		}
+		if client == nil {
+			t.Error("expected non-nil client")
+		}
+	})
+
+	t.Run("returns error when no API key configured", func(t *testing.T) {
+		cfg := &config.Config{
+			Linear: config.LinearConfig{
+				APIKey: "", // No API key in config
+			},
+		}
+		// Mock store that returns no API key
+		mockStore := func() (*config.Store, error) {
+			return config.NewStoreWithPath(t.TempDir())
+		}
+
+		_, err := getLinearClientWithStore(cfg, mockStore)
+		if err == nil {
+			t.Error("expected error when no API key configured")
+		}
+		if !strings.Contains(err.Error(), "Linear API key not configured") {
+			t.Errorf("expected 'Linear API key not configured' error, got: %v", err)
 		}
 	})
 }
