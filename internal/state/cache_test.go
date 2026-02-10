@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charleslr/jig/internal/plan"
 )
@@ -539,6 +540,25 @@ func TestListCachedPlans(t *testing.T) {
 	}
 }
 
+func TestListCachedPlans_DirectoryNotExist(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Don't create the plans directory - only create the cache base
+	cache := &Cache{dir: tmpDir}
+
+	plans, err := cache.ListCachedPlans()
+	if err != nil {
+		t.Fatalf("ListCachedPlans() error = %v", err)
+	}
+	if plans != nil {
+		t.Errorf("expected nil for non-existent directory, got %d plans", len(plans))
+	}
+}
+
 func TestListCachedPlans_Empty(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
 	if err != nil {
@@ -560,6 +580,138 @@ func TestListCachedPlans_Empty(t *testing.T) {
 	}
 	if cachedPlans != nil && len(cachedPlans) != 0 {
 		t.Errorf("expected empty list for empty cache, got %d plans", len(cachedPlans))
+	}
+}
+
+func TestGetCachedPlan_InvalidJSON(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Write invalid JSON to the cache file
+	invalidJSON := []byte("this is not valid json {{{")
+	path := filepath.Join(tmpDir, "plans", "invalid-plan.json")
+	if err := os.WriteFile(path, invalidJSON, 0644); err != nil {
+		t.Fatalf("failed to write invalid JSON: %v", err)
+	}
+
+	cached, err := cache.GetCachedPlan("invalid-plan")
+	if err == nil {
+		t.Error("expected error for invalid JSON")
+	}
+	if cached != nil {
+		t.Error("expected nil result for invalid JSON")
+	}
+	if !strings.Contains(err.Error(), "failed to parse plan cache") {
+		t.Errorf("expected 'failed to parse plan cache' error, got: %v", err)
+	}
+}
+
+func TestListCachedPlans_SkipsNonJSONFiles(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Save a valid plan
+	validPlan := &plan.Plan{
+		ID:         "valid-plan",
+		Title:      "Valid Plan",
+		IssueID:    "NUM-123",
+		RawContent: "---\nid: valid-plan\ntitle: Valid Plan\nstatus: draft\nauthor: test\n---\n# Valid\n## Problem Statement\nP\n## Proposed Solution\nS\n",
+	}
+	if err := cache.SavePlan(validPlan); err != nil {
+		t.Fatalf("SavePlan() error = %v", err)
+	}
+
+	// Add a non-JSON file that should be skipped
+	txtPath := filepath.Join(tmpDir, "plans", "readme.txt")
+	if err := os.WriteFile(txtPath, []byte("readme content"), 0644); err != nil {
+		t.Fatalf("failed to write txt file: %v", err)
+	}
+
+	// Add a subdirectory that should be skipped
+	subdir := filepath.Join(tmpDir, "plans", "subdir")
+	if err := os.MkdirAll(subdir, 0755); err != nil {
+		t.Fatalf("failed to create subdir: %v", err)
+	}
+
+	plans, err := cache.ListCachedPlans()
+	if err != nil {
+		t.Fatalf("ListCachedPlans() error = %v", err)
+	}
+
+	// Should only return the valid plan, ignoring .txt and .md files and directories
+	if len(plans) != 1 {
+		t.Errorf("expected 1 plan, got %d", len(plans))
+	}
+	if plans[0].Plan.ID != "valid-plan" {
+		t.Errorf("expected plan ID 'valid-plan', got %q", plans[0].Plan.ID)
+	}
+}
+
+func TestListCachedPlans_SkipsInvalidJSON(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Save a valid plan
+	validPlan := &plan.Plan{
+		ID:         "valid-plan",
+		Title:      "Valid Plan",
+		IssueID:    "NUM-123",
+		RawContent: "---\nid: valid-plan\ntitle: Valid Plan\nstatus: draft\nauthor: test\n---\n# Valid\n## Problem Statement\nP\n## Proposed Solution\nS\n",
+	}
+	if err := cache.SavePlan(validPlan); err != nil {
+		t.Fatalf("SavePlan() error = %v", err)
+	}
+
+	// Add an invalid JSON file that should be skipped
+	invalidPath := filepath.Join(tmpDir, "plans", "invalid.json")
+	if err := os.WriteFile(invalidPath, []byte("not valid json"), 0644); err != nil {
+		t.Fatalf("failed to write invalid json: %v", err)
+	}
+
+	plans, err := cache.ListCachedPlans()
+	if err != nil {
+		t.Fatalf("ListCachedPlans() error = %v", err)
+	}
+
+	// Should only return the valid plan, skipping the invalid JSON
+	if len(plans) != 1 {
+		t.Errorf("expected 1 plan (skipping invalid), got %d", len(plans))
+	}
+	if plans[0].Plan.ID != "valid-plan" {
+		t.Errorf("expected plan ID 'valid-plan', got %q", plans[0].Plan.ID)
 	}
 }
 
@@ -616,6 +768,37 @@ func TestMarkPlanSynced(t *testing.T) {
 	}
 }
 
+func TestMarkPlanSynced_GetCachedPlanError(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Write invalid JSON to the cache file
+	invalidJSON := []byte("this is not valid json {{{")
+	path := filepath.Join(tmpDir, "plans", "corrupted-plan.json")
+	if err := os.WriteFile(path, invalidJSON, 0644); err != nil {
+		t.Fatalf("failed to write invalid JSON: %v", err)
+	}
+
+	err = cache.MarkPlanSynced("corrupted-plan")
+	if err == nil {
+		t.Error("expected error for corrupted plan")
+	}
+	if !strings.Contains(err.Error(), "failed to get cached plan") {
+		t.Errorf("expected 'failed to get cached plan' error, got: %v", err)
+	}
+}
+
 func TestMarkPlanSynced_NotFound(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
 	if err != nil {
@@ -637,6 +820,81 @@ func TestMarkPlanSynced_NotFound(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not found") {
 		t.Errorf("expected 'not found' error, got: %v", err)
+	}
+}
+
+
+func TestNeedsSync(t *testing.T) {
+	now := time.Now()
+	past := now.Add(-1 * time.Hour)
+	future := now.Add(1 * time.Hour)
+
+	tests := []struct {
+		name     string
+		cached   *CachedPlan
+		expected bool
+	}{
+		{
+			name: "nil plan returns false",
+			cached: &CachedPlan{
+				Plan:      nil,
+				UpdatedAt: now,
+			},
+			expected: false,
+		},
+		{
+			name: "plan with empty issue ID returns false",
+			cached: &CachedPlan{
+				Plan:      &plan.Plan{ID: "test", IssueID: ""},
+				UpdatedAt: now,
+			},
+			expected: false,
+		},
+		{
+			name: "plan never synced returns true",
+			cached: &CachedPlan{
+				Plan:      &plan.Plan{ID: "test", IssueID: "NUM-123"},
+				UpdatedAt: now,
+				SyncedAt:  nil,
+			},
+			expected: true,
+		},
+		{
+			name: "plan updated after sync returns true",
+			cached: &CachedPlan{
+				Plan:      &plan.Plan{ID: "test", IssueID: "NUM-123"},
+				UpdatedAt: future,
+				SyncedAt:  &now,
+			},
+			expected: true,
+		},
+		{
+			name: "plan synced after update returns false",
+			cached: &CachedPlan{
+				Plan:      &plan.Plan{ID: "test", IssueID: "NUM-123"},
+				UpdatedAt: past,
+				SyncedAt:  &now,
+			},
+			expected: false,
+		},
+		{
+			name: "plan synced at same time as update returns false",
+			cached: &CachedPlan{
+				Plan:      &plan.Plan{ID: "test", IssueID: "NUM-123"},
+				UpdatedAt: now,
+				SyncedAt:  &now,
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.cached.NeedsSync()
+			if result != tt.expected {
+				t.Errorf("NeedsSync() = %v, want %v", result, tt.expected)
+			}
+		})
 	}
 }
 
