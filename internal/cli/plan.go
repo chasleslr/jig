@@ -757,6 +757,11 @@ func shouldCreateIssueForPlan(cfg *config.Config, p *plan.Plan) bool {
 	return true
 }
 
+// issueCreator is an interface for creating issues from plans (for testability)
+type issueCreator interface {
+	CreateIssueFromPlan(ctx context.Context, p *plan.Plan) (*tracker.Issue, error)
+}
+
 // createIssueForPlan creates a new Linear issue from the plan and returns the issue identifier
 func createIssueForPlan(ctx context.Context, cfg *config.Config, p *plan.Plan) (string, error) {
 	client, err := getLinearClient(cfg)
@@ -764,7 +769,12 @@ func createIssueForPlan(ctx context.Context, cfg *config.Config, p *plan.Plan) (
 		return "", err
 	}
 
-	issue, err := client.CreateIssueFromPlan(ctx, p)
+	return createIssueForPlanWithCreator(ctx, client, p)
+}
+
+// createIssueForPlanWithCreator creates an issue using the provided creator (for testability)
+func createIssueForPlanWithCreator(ctx context.Context, creator issueCreator, p *plan.Plan) (string, error) {
+	issue, err := creator.CreateIssueFromPlan(ctx, p)
 	if err != nil {
 		return "", err
 	}
@@ -773,7 +783,12 @@ func createIssueForPlan(ctx context.Context, cfg *config.Config, p *plan.Plan) (
 
 // getLinearClient creates a Linear client
 func getLinearClient(cfg *config.Config) (*linear.Client, error) {
-	store, err := config.NewStore()
+	return getLinearClientWithStore(cfg, config.NewStore)
+}
+
+// getLinearClientWithStore creates a Linear client using the provided store factory (for testability)
+func getLinearClientWithStore(cfg *config.Config, newStore func() (*config.Store, error)) (*linear.Client, error) {
+	store, err := newStore()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get config store: %w", err)
 	}
