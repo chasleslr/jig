@@ -1,7 +1,11 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/charleslr/jig/internal/config"
 )
 
 func TestAddJigPermissions(t *testing.T) {
@@ -130,4 +134,152 @@ func TestJigPermissionsContent(t *testing.T) {
 			t.Errorf("expected jig permission %s to be defined", expected)
 		}
 	}
+}
+
+func TestIsJigConfigured(t *testing.T) {
+	t.Run("returns true when config.toml exists", func(t *testing.T) {
+		// Create temp jig directory with config
+		tmpDir := t.TempDir()
+		os.Setenv("JIG_HOME", tmpDir)
+		defer os.Unsetenv("JIG_HOME")
+
+		// Create config file
+		configPath := filepath.Join(tmpDir, "config.toml")
+		os.WriteFile(configPath, []byte("# test config"), 0644)
+
+		if !isJigConfigured() {
+			t.Error("should return true when config.toml exists")
+		}
+	})
+
+	t.Run("returns false when config.toml does not exist", func(t *testing.T) {
+		// Use empty temp directory
+		tmpDir := t.TempDir()
+		os.Setenv("JIG_HOME", tmpDir)
+		defer os.Unsetenv("JIG_HOME")
+
+		if isJigConfigured() {
+			t.Error("should return false when config.toml does not exist")
+		}
+	})
+
+	t.Run("returns false when JIG_HOME cannot be determined", func(t *testing.T) {
+		// Temporarily unset HOME and JIG_HOME to cause error
+		originalHome := os.Getenv("HOME")
+		originalJigHome := os.Getenv("JIG_HOME")
+		os.Unsetenv("HOME")
+		os.Unsetenv("JIG_HOME")
+		defer func() {
+			os.Setenv("HOME", originalHome)
+			if originalJigHome != "" {
+				os.Setenv("JIG_HOME", originalJigHome)
+			}
+		}()
+
+		// This test may behave differently on different systems
+		// Just ensure it doesn't panic
+		_ = isJigConfigured()
+	})
+}
+
+func TestGetSkillsLocation(t *testing.T) {
+	t.Run("returns global by default when not configured", func(t *testing.T) {
+		// Initialize with empty config
+		tmpDir := t.TempDir()
+		os.Setenv("JIG_HOME", tmpDir)
+		defer os.Unsetenv("JIG_HOME")
+
+		config.Init("")
+
+		location := getSkillsLocation()
+		if location != "global" {
+			t.Errorf("expected 'global', got '%s'", location)
+		}
+	})
+
+	t.Run("returns configured location when set", func(t *testing.T) {
+		// Create config with skills_location set
+		tmpDir := t.TempDir()
+		os.Setenv("JIG_HOME", tmpDir)
+		defer os.Unsetenv("JIG_HOME")
+
+		// Write config with project location
+		configPath := filepath.Join(tmpDir, "config.toml")
+		configContent := `[claude]
+skills_location = "project"
+`
+		os.WriteFile(configPath, []byte(configContent), 0644)
+
+		// Initialize config to read the file
+		config.Init("")
+
+		location := getSkillsLocation()
+		if location != "project" {
+			t.Errorf("expected 'project', got '%s'", location)
+		}
+	})
+}
+
+func TestHasJigHook(t *testing.T) {
+	t.Run("returns true when jig hook exists", func(t *testing.T) {
+		settings := map[string]interface{}{
+			"hooks": map[string]interface{}{
+				"PreToolUse": []interface{}{
+					map[string]interface{}{
+						"matcher": "ExitPlanMode",
+						"hooks": []interface{}{
+							map[string]interface{}{
+								"type":    "command",
+								"command": "jig hook exit-plan-mode",
+							},
+						},
+					},
+				},
+			},
+		}
+
+		if !hasJigHook(settings) {
+			t.Error("should return true when jig hook exists")
+		}
+	})
+
+	t.Run("returns false when no hooks section", func(t *testing.T) {
+		settings := make(map[string]interface{})
+
+		if hasJigHook(settings) {
+			t.Error("should return false when no hooks section")
+		}
+	})
+
+	t.Run("returns false when no PreToolUse", func(t *testing.T) {
+		settings := map[string]interface{}{
+			"hooks": map[string]interface{}{},
+		}
+
+		if hasJigHook(settings) {
+			t.Error("should return false when no PreToolUse")
+		}
+	})
+
+	t.Run("returns false when jig hook not present", func(t *testing.T) {
+		settings := map[string]interface{}{
+			"hooks": map[string]interface{}{
+				"PreToolUse": []interface{}{
+					map[string]interface{}{
+						"matcher": "SomeOtherMatcher",
+						"hooks": []interface{}{
+							map[string]interface{}{
+								"type":    "command",
+								"command": "some other command",
+							},
+						},
+					},
+				},
+			},
+		}
+
+		if hasJigHook(settings) {
+			t.Error("should return false when jig hook not present")
+		}
+	})
 }

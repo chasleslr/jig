@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/charleslr/jig/internal/config"
+	"github.com/charleslr/jig/internal/skills"
 	"github.com/charleslr/jig/internal/tracker"
 	"github.com/charleslr/jig/internal/tracker/linear"
 	"github.com/charleslr/jig/internal/ui"
@@ -26,6 +27,7 @@ type OnboardingResult struct {
 	BranchPattern  string
 	WorktreeDir    string
 	InstallSkills  bool
+	SkillsLocation string // "global" or "project"
 }
 
 // RunOnboarding runs the interactive onboarding wizard
@@ -208,7 +210,30 @@ func RunOnboarding() (*OnboardingResult, error) {
 			Type:        ui.StepTypeConfirm,
 		},
 
-		// Step 11: Summary
+		// Step 11: Skills Location
+		{
+			ID:          "skills_location",
+			Title:       "Skills Installation Location",
+			Description: "Where should jig skills be installed?",
+			Type:        ui.StepTypeSelect,
+			Options: []ui.SelectOption{
+				{
+					Label:       "Global (Recommended)",
+					Value:       "global",
+					Description: "Install to ~/.claude/commands/jig/ (available in all projects)",
+				},
+				{
+					Label:       "Project",
+					Value:       "project",
+					Description: "Install to ./.claude/commands/jig/ (this project only)",
+				},
+			},
+			ShouldSkip: func(results map[string]string) bool {
+				return results["install_skills"] != "yes"
+			},
+		},
+
+		// Step 12: Summary
 		{
 			ID:    "summary",
 			Title: "Setup Complete!",
@@ -243,7 +268,14 @@ func RunOnboarding() (*OnboardingResult, error) {
 				b.WriteString(fmt.Sprintf("  Worktree Dir: %s\n", worktreeDir))
 
 				if results["install_skills"] == "yes" {
-					b.WriteString("  Claude Skills: Installed\n")
+					location := results["skills_location"]
+					if location == "global" {
+						b.WriteString("  Claude Skills: Installed globally (~/.claude/commands/jig/)\n")
+					} else if location == "project" {
+						b.WriteString("  Claude Skills: Installed for this project (./.claude/commands/jig/)\n")
+					} else {
+						b.WriteString("  Claude Skills: Installed\n")
+					}
 				}
 
 				b.WriteString("\nGet started:\n")
@@ -281,6 +313,12 @@ func RunOnboarding() (*OnboardingResult, error) {
 	result.WorktreeDir = worktreeDir
 
 	result.InstallSkills = results["install_skills"] == "yes"
+
+	// Store skills location preference (default to global if not specified)
+	result.SkillsLocation = results["skills_location"]
+	if result.SkillsLocation == "" {
+		result.SkillsLocation = "global"
+	}
 
 	// Store project info
 	if projectVal, ok := results["project"]; ok && projectVal != "" && projectVal != "skip" {
@@ -567,6 +605,13 @@ func SaveOnboardingResult(result *OnboardingResult) error {
 		return fmt.Errorf("failed to set worktree_dir: %w", err)
 	}
 
+	// Save skills location preference
+	if result.SkillsLocation != "" {
+		if err := config.Set("claude.skills_location", result.SkillsLocation); err != nil {
+			return fmt.Errorf("failed to set skills_location: %w", err)
+		}
+	}
+
 	if err := config.Save(); err != nil {
 		return fmt.Errorf("failed to save configuration: %w", err)
 	}
@@ -575,16 +620,82 @@ func SaveOnboardingResult(result *OnboardingResult) error {
 }
 
 // InstallClaudeSkills installs jig hooks and skills for Claude Code
-func InstallClaudeSkills() error {
+// location can be "global" (user-level) or "project" (project-level)
+func InstallClaudeSkills(location string) error {
 	// Run the existing init logic to set up hooks
 	if err := setupClaudeHooks(); err != nil {
 		return fmt.Errorf("failed to set up Claude hooks: %w", err)
 	}
 
-	// Ensure .claude/commands/jig directory exists for custom commands
-	commandsDir := ".claude/commands/jig"
+	// Determine commands directory based on location
+	var commandsDir string
+	if location == "global" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("failed to get home directory: %w", err)
+		}
+		commandsDir = filepath.Join(homeDir, ".claude", "commands", "jig")
+	} else {
+		// Default to project-level
+		commandsDir = ".claude/commands/jig"
+	}
+
+	// Ensure directory exists
 	if err := os.MkdirAll(commandsDir, 0755); err != nil {
 		return fmt.Errorf("failed to create commands directory: %w", err)
+	}
+
+	// Write embedded skill files
+	if err := installSkillFiles(commandsDir, initForce); err != nil {
+		return fmt.Errorf("failed to install skill files: %w", err)
+	}
+
+	return nil
+}
+
+// InstallSkillFiles installs Claude Code skill files (exported for use in init.go)
+// location can be "global" (user-level) or "project" (project-level)
+func InstallSkillFiles(location string, force bool) error {
+	// Determine commands directory based on location
+	var commandsDir string
+	if location == "global" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("failed to get home directory: %w", err)
+		}
+		commandsDir = filepath.Join(homeDir, ".claude", "commands", "jig")
+	} else {
+		// Default to project-level
+		commandsDir = ".claude/commands/jig"
+	}
+
+	if err := os.MkdirAll(commandsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create commands directory: %w", err)
+	}
+
+	return installSkillFiles(commandsDir, force)
+}
+
+// installSkillFiles writes embedded skill files to the commands directory
+func installSkillFiles(commandsDir string, force bool) error {
+	skillFiles := []string{"plan.md", "implement.md"}
+
+	for _, skillFile := range skillFiles {
+		content, err := skills.EmbeddedSkills.ReadFile(skillFile)
+		if err != nil {
+			return fmt.Errorf("failed to read embedded skill %s: %w", skillFile, err)
+		}
+
+		destPath := filepath.Join(commandsDir, skillFile)
+
+		// Check if file exists (skip unless force)
+		if _, err := os.Stat(destPath); err == nil && !force {
+			continue // File exists, don't overwrite
+		}
+
+		if err := os.WriteFile(destPath, content, 0644); err != nil {
+			return fmt.Errorf("failed to write skill %s: %w", skillFile, err)
+		}
 	}
 
 	return nil
@@ -629,6 +740,9 @@ func setupClaudeHooks() error {
 	})
 	hooks["PreToolUse"] = preToolUse
 	rawSettings["hooks"] = hooks
+
+	// Add permissions for jig commands
+	addJigPermissions(rawSettings)
 
 	// Write back
 	data, err := json.MarshalIndent(rawSettings, "", "  ")

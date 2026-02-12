@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/charleslr/jig/internal/config"
 	"github.com/charleslr/jig/internal/ui"
 	"github.com/spf13/cobra"
 )
@@ -61,6 +62,14 @@ type HookConfig struct {
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
+	// Check if already configured
+	isConfigured := isJigConfigured()
+
+	// If already configured and not forcing, just update hooks and skills
+	if isConfigured && !initForce {
+		return runQuickUpdate()
+	}
+
 	// If interactive and not hooks-only, run full onboarding
 	if ui.IsInteractive() && !initHooksOnly {
 		return runInteractiveInit()
@@ -68,6 +77,48 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// Otherwise, just set up hooks (non-interactive mode)
 	return runHooksOnlyInit()
+}
+
+// isJigConfigured checks if jig has been configured (config.toml exists)
+func isJigConfigured() bool {
+	jigDir, err := config.JigDir()
+	if err != nil {
+		return false
+	}
+	configPath := filepath.Join(jigDir, "config.toml")
+	_, err = os.Stat(configPath)
+	return err == nil
+}
+
+// getSkillsLocation returns the preferred skills installation location from config
+// Returns "global" if not configured
+func getSkillsLocation() string {
+	cfg := config.Get()
+	if cfg.Claude.SkillsLocation != "" {
+		return cfg.Claude.SkillsLocation
+	}
+	// Default to global if not configured
+	return "global"
+}
+
+// runQuickUpdate updates hooks and skills without going through the full wizard
+func runQuickUpdate() error {
+	printInfo("Jig is already configured. Updating hooks and skills...")
+	fmt.Println()
+
+	// Install/update Claude skills (this handles both hooks and skill files)
+	location := getSkillsLocation()
+	if err := InstallClaudeSkills(location); err != nil {
+		return fmt.Errorf("failed to update Claude skills: %w", err)
+	}
+
+	printSuccess("Hooks and skills updated successfully")
+	fmt.Println()
+	fmt.Println("Your jig setup is up to date!")
+	fmt.Println()
+	fmt.Println("Use 'jig init --force' to reconfigure from scratch.")
+
+	return nil
 }
 
 // runInteractiveInit runs the full interactive onboarding wizard
@@ -89,7 +140,7 @@ func runInteractiveInit() error {
 
 	// Install Claude skills if requested
 	if result.InstallSkills {
-		if err := InstallClaudeSkills(); err != nil {
+		if err := InstallClaudeSkills(result.SkillsLocation); err != nil {
 			printWarning(fmt.Sprintf("Could not install Claude skills: %v", err))
 		} else {
 			printSuccess("Claude Code hooks installed")
@@ -120,43 +171,27 @@ func runHooksOnlyInit() error {
 	}
 
 	// Check if jig hook already exists
-	if !initForce && hasJigHook(rawSettings) {
-		printInfo("Jig hooks already configured in .claude/settings.json")
-		fmt.Println("Use --force to overwrite existing configuration")
+	hooksAlreadyExist := hasJigHook(rawSettings)
+	location := getSkillsLocation()
+
+	if !initForce && hooksAlreadyExist {
+		// Hooks exist, just update skills without touching hooks
+		printInfo("Jig hooks already configured. Updating skills...")
+		fmt.Println()
+
+		if err := InstallSkillFiles(location, initForce); err != nil {
+			return fmt.Errorf("failed to update skills: %w", err)
+		}
+
+		printSuccess("Skills updated successfully")
+		fmt.Println()
+		fmt.Println("Use 'jig init --force' to reinstall hooks.")
 		return nil
 	}
 
-	// Add or update the hooks
-	hooks := getOrCreateHooks(rawSettings)
-
-	// Remove any existing jig hooks first
-	hooks["PreToolUse"] = filterNonJigHooks(hooks["PreToolUse"])
-
-	// Add the jig ExitPlanMode hook
-	preToolUse := hooks["PreToolUse"].([]interface{})
-	preToolUse = append(preToolUse, map[string]interface{}{
-		"matcher": "ExitPlanMode",
-		"hooks": []interface{}{
-			map[string]interface{}{
-				"type":    "command",
-				"command": "jig hook exit-plan-mode",
-			},
-		},
-	})
-	hooks["PreToolUse"] = preToolUse
-	rawSettings["hooks"] = hooks
-
-	// Add permissions for jig commands
-	addJigPermissions(rawSettings)
-
-	// Write back
-	data, err := json.MarshalIndent(rawSettings, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to serialize settings: %w", err)
-	}
-
-	if err := os.WriteFile(settingsPath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write settings.json: %w", err)
+	// Install Claude skills (hooks + skill files)
+	if err := InstallClaudeSkills(location); err != nil {
+		return fmt.Errorf("failed to install Claude skills: %w", err)
 	}
 
 	printSuccess("Jig initialized successfully")
@@ -164,6 +199,10 @@ func runHooksOnlyInit() error {
 	fmt.Println("Added to .claude/settings.json:")
 	fmt.Println("  - PreToolUse hook for ExitPlanMode")
 	fmt.Println("  - Permissions for jig commands (auto-approved)")
+	fmt.Println()
+	fmt.Println("Installed Claude Code skills:")
+	fmt.Println("  - /jig:plan")
+	fmt.Println("  - /jig:implement")
 	fmt.Println()
 	fmt.Println("When you exit plan mode, Claude will now prompt you to save your plan.")
 	fmt.Println()
