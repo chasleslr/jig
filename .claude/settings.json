@@ -3,28 +3,22 @@
     "allow": [
       "Bash(go build:*)",
       "Bash(go test:*)",
-      "Bash(golangci-lint:*)"
+      "Bash(golangci-lint:*)",
+      "Bash(jig plan save:*)",
+      "Bash(jig hook mark-skip-save:*)",
+      "Bash(jig hook mark-plan-saved:*)"
     ]
   },
   "hooks": {
     "PreToolUse": [
       {
+        "matcher": "ExitPlanMode",
         "hooks": [
           {
-            "command": "werk hook exit-plan-mode",
-            "type": "command"
+            "type": "command",
+            "command": "jig hook exit-plan-mode"
           }
-        ],
-        "matcher": "ExitPlanMode"
-      },
-      {
-        "hooks": [
-          {
-            "command": "jig hook exit-plan-mode",
-            "type": "command"
-          }
-        ],
-        "matcher": "ExitPlanMode"
+        ]
       }
     ]
   }

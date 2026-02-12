@@ -13,6 +13,7 @@ type Config struct {
 	Default DefaultConfig         `mapstructure:"default"`
 	Linear  LinearConfig          `mapstructure:"linear"`
 	GitHub  GitHubConfig          `mapstructure:"github"`
+	Claude  ClaudeConfig          `mapstructure:"claude"`
 	Runners map[string]RunnerSpec `mapstructure:"runners"`
 	Review  ReviewConfig          `mapstructure:"review"`
 	Git     GitConfig             `mapstructure:"git"`
@@ -38,6 +39,11 @@ type LinearConfig struct {
 // GitHubConfig holds GitHub configuration (uses gh CLI auth)
 type GitHubConfig struct {
 	// GitHub configuration is handled by gh CLI
+}
+
+// ClaudeConfig holds Claude Code configuration
+type ClaudeConfig struct {
+	SkillsLocation string `mapstructure:"skills_location"` // "global" or "project"
 }
 
 // RunnerSpec defines configuration for an external coding tool
@@ -151,6 +157,9 @@ func setDefaults() {
 	viper.SetDefault("linear.sync_plan_on_save", true)
 	viper.SetDefault("linear.create_issue_on_save", true)
 	viper.SetDefault("linear.plan_label_name", "jig-plan")
+
+	// Default Claude Code settings
+	viper.SetDefault("claude.skills_location", "global")
 
 	jigDir, _ := JigDir()
 	viper.SetDefault("git.worktree_dir", filepath.Join(jigDir, "worktrees"))

@@ -90,13 +90,25 @@ func isJigConfigured() bool {
 	return err == nil
 }
 
+// getSkillsLocation returns the preferred skills installation location from config
+// Returns "global" if not configured
+func getSkillsLocation() string {
+	cfg := config.Get()
+	if cfg.Claude.SkillsLocation != "" {
+		return cfg.Claude.SkillsLocation
+	}
+	// Default to global if not configured
+	return "global"
+}
+
 // runQuickUpdate updates hooks and skills without going through the full wizard
 func runQuickUpdate() error {
 	printInfo("Jig is already configured. Updating hooks and skills...")
 	fmt.Println()
 
 	// Install/update Claude skills (this handles both hooks and skill files)
-	if err := InstallClaudeSkills(); err != nil {
+	location := getSkillsLocation()
+	if err := InstallClaudeSkills(location); err != nil {
 		return fmt.Errorf("failed to update Claude skills: %w", err)
 	}
 
@@ -128,7 +140,7 @@ func runInteractiveInit() error {
 
 	// Install Claude skills if requested
 	if result.InstallSkills {
-		if err := InstallClaudeSkills(); err != nil {
+		if err := InstallClaudeSkills(result.SkillsLocation); err != nil {
 			printWarning(fmt.Sprintf("Could not install Claude skills: %v", err))
 		} else {
 			printSuccess("Claude Code hooks installed")
@@ -160,12 +172,14 @@ func runHooksOnlyInit() error {
 
 	// Check if jig hook already exists
 	hooksAlreadyExist := hasJigHook(rawSettings)
+	location := getSkillsLocation()
+
 	if !initForce && hooksAlreadyExist {
 		// Hooks exist, just update skills without touching hooks
 		printInfo("Jig hooks already configured. Updating skills...")
 		fmt.Println()
 
-		if err := InstallSkillFiles(initForce); err != nil {
+		if err := InstallSkillFiles(location, initForce); err != nil {
 			return fmt.Errorf("failed to update skills: %w", err)
 		}
 
@@ -176,7 +190,7 @@ func runHooksOnlyInit() error {
 	}
 
 	// Install Claude skills (hooks + skill files)
-	if err := InstallClaudeSkills(); err != nil {
+	if err := InstallClaudeSkills(location); err != nil {
 		return fmt.Errorf("failed to install Claude skills: %w", err)
 	}
 
