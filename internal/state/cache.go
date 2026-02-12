@@ -65,7 +65,7 @@ func (c *Cache) SavePlan(p *plan.Plan) error {
 
 	cached := &CachedPlan{
 		Plan:      p,
-		IssueID:   p.ID,
+		IssueID:   p.IssueID,
 		CachedAt:  time.Now(),
 		UpdatedAt: p.Updated,
 	}
