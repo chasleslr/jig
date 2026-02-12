@@ -438,3 +438,461 @@ func TestTransitionIssue_WithIdentifier(t *testing.T) {
 		t.Errorf("expected 3 API requests, got %d", requestCount)
 	}
 }
+
+// TestGetAvailableStatuses_WithIdentifier verifies that GetAvailableStatuses
+// correctly resolves identifiers to UUIDs before fetching workflow states.
+func TestGetAvailableStatuses_WithIdentifier(t *testing.T) {
+	requestCount := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+
+		// First request: getIssueByIdentifier (resolve NUM-70 → internal UUID)
+		if requestCount == 1 {
+			response := GraphQLResponse{
+				Data: json.RawMessage(`{
+					"issues": {
+						"nodes": [{
+							"id": "internal-uuid-456",
+							"identifier": "NUM-70",
+							"title": "Test Issue",
+							"state": {"id": "state-1", "name": "Todo", "type": "unstarted"}
+						}]
+					}
+				}`),
+			}
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+
+		// Second request: getWorkflowStates
+		if requestCount == 2 {
+			response := GraphQLResponse{
+				Data: json.RawMessage(`{
+					"issue": {
+						"team": {
+							"states": {
+								"nodes": [
+									{"id": "state-1", "name": "Backlog", "type": "backlog"},
+									{"id": "state-2", "name": "Todo", "type": "unstarted"},
+									{"id": "state-3", "name": "In Progress", "type": "started"},
+									{"id": "state-4", "name": "Done", "type": "completed"}
+								]
+							}
+						}
+					}
+				}`),
+			}
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+	}))
+	defer server.Close()
+
+	client := newTestClient(server.URL)
+	statuses, err := client.GetAvailableStatuses(context.Background(), "NUM-70")
+	if err != nil {
+		t.Fatalf("GetAvailableStatuses failed: %v", err)
+	}
+
+	// Verify we got the expected statuses
+	expectedStatuses := []tracker.Status{
+		tracker.StatusBacklog,
+		tracker.StatusTodo,
+		tracker.StatusInProgress,
+		tracker.StatusDone,
+	}
+
+	if len(statuses) != len(expectedStatuses) {
+		t.Errorf("expected %d statuses, got %d", len(expectedStatuses), len(statuses))
+	}
+
+	// Verify we made exactly 2 requests (resolve + get states)
+	if requestCount != 2 {
+		t.Errorf("expected 2 API requests, got %d", requestCount)
+	}
+}
+
+// TestResolveIssueID_ErrorCase verifies that resolveIssueID returns an error
+// when the identifier cannot be resolved.
+func TestResolveIssueID_ErrorCase(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Return empty results to simulate "not found"
+		response := GraphQLResponse{
+			Data: json.RawMessage(`{
+				"issues": {
+					"nodes": []
+				}
+			}`),
+		}
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	client := newTestClient(server.URL)
+	_, err := client.resolveIssueID(context.Background(), "INVALID-999")
+	if err == nil {
+		t.Fatal("expected error for invalid identifier, got nil")
+	}
+
+	if !contains(err.Error(), "failed to resolve identifier") {
+		t.Errorf("expected error containing %q, got %q", "failed to resolve identifier", err.Error())
+	}
+}
+
+// TestTransitionIssue_ResolveError verifies that TransitionIssue returns an error
+// when identifier resolution fails.
+func TestTransitionIssue_ResolveError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Return empty results to simulate "not found"
+		response := GraphQLResponse{
+			Data: json.RawMessage(`{
+				"issues": {
+					"nodes": []
+				}
+			}`),
+		}
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	client := newTestClient(server.URL)
+	err := client.TransitionIssue(context.Background(), "INVALID-999", tracker.StatusInProgress)
+	if err == nil {
+		t.Fatal("expected error when identifier resolution fails, got nil")
+	}
+
+	if !contains(err.Error(), "failed to resolve identifier") {
+		t.Errorf("expected error containing %q, got %q", "failed to resolve identifier", err.Error())
+	}
+}
+
+// TestGetAvailableStatuses_ResolveError verifies that GetAvailableStatuses returns
+// an error when identifier resolution fails.
+func TestGetAvailableStatuses_ResolveError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Return empty results to simulate "not found"
+		response := GraphQLResponse{
+			Data: json.RawMessage(`{
+				"issues": {
+					"nodes": []
+				}
+			}`),
+		}
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	client := newTestClient(server.URL)
+	_, err := client.GetAvailableStatuses(context.Background(), "INVALID-999")
+	if err == nil {
+		t.Fatal("expected error when identifier resolution fails, got nil")
+	}
+
+	if !contains(err.Error(), "failed to resolve identifier") {
+		t.Errorf("expected error containing %q, got %q", "failed to resolve identifier", err.Error())
+	}
+}
+
+// TestTransitionIssue_GetWorkflowStatesError verifies error handling when
+// getWorkflowStates fails.
+func TestTransitionIssue_GetWorkflowStatesError(t *testing.T) {
+	requestCount := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+
+		if requestCount == 1 {
+			// First request: resolve identifier successfully
+			response := GraphQLResponse{
+				Data: json.RawMessage(`{
+					"issues": {
+						"nodes": [{
+							"id": "internal-uuid-123",
+							"identifier": "NUM-70",
+							"title": "Test Issue",
+							"state": {"id": "state-1", "name": "Todo", "type": "unstarted"}
+						}]
+					}
+				}`),
+			}
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+
+		if requestCount == 2 {
+			// Second request: getWorkflowStates returns error
+			response := GraphQLResponse{
+				Errors: []GraphQLError{{Message: "Team not found"}},
+			}
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+	}))
+	defer server.Close()
+
+	client := newTestClient(server.URL)
+	err := client.TransitionIssue(context.Background(), "NUM-70", tracker.StatusInProgress)
+	if err == nil {
+		t.Fatal("expected error when getWorkflowStates fails, got nil")
+	}
+}
+
+// TestTransitionIssue_NoMatchingState verifies error handling when no matching
+// workflow state is found for the requested status.
+func TestTransitionIssue_NoMatchingState(t *testing.T) {
+	requestCount := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+
+		if requestCount == 1 {
+			// Resolve identifier
+			response := GraphQLResponse{
+				Data: json.RawMessage(`{
+					"issues": {
+						"nodes": [{
+							"id": "internal-uuid-123",
+							"identifier": "NUM-70",
+							"title": "Test Issue",
+							"state": {"id": "state-1", "name": "Todo", "type": "unstarted"}
+						}]
+					}
+				}`),
+			}
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+
+		if requestCount == 2 {
+			// Return states that don't match StatusInReview
+			response := GraphQLResponse{
+				Data: json.RawMessage(`{
+					"issue": {
+						"team": {
+							"states": {
+								"nodes": [
+									{"id": "state-1", "name": "Todo", "type": "unstarted"},
+									{"id": "state-2", "name": "Done", "type": "completed"}
+								]
+							}
+						}
+					}
+				}`),
+			}
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+	}))
+	defer server.Close()
+
+	client := newTestClient(server.URL)
+	err := client.TransitionIssue(context.Background(), "NUM-70", tracker.StatusInReview)
+	if err == nil {
+		t.Fatal("expected error when no matching state found, got nil")
+	}
+
+	if !contains(err.Error(), "no matching workflow state") {
+		t.Errorf("expected error containing %q, got %q", "no matching workflow state", err.Error())
+	}
+}
+
+// TestTransitionIssue_MutationFails verifies error handling when the
+// issueUpdate mutation fails.
+func TestTransitionIssue_MutationFails(t *testing.T) {
+	requestCount := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+
+		if requestCount == 1 {
+			// Resolve identifier
+			response := GraphQLResponse{
+				Data: json.RawMessage(`{
+					"issues": {
+						"nodes": [{
+							"id": "internal-uuid-123",
+							"identifier": "NUM-70",
+							"title": "Test Issue",
+							"state": {"id": "state-1", "name": "Todo", "type": "unstarted"}
+						}]
+					}
+				}`),
+			}
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+
+		if requestCount == 2 {
+			// Get workflow states
+			response := GraphQLResponse{
+				Data: json.RawMessage(`{
+					"issue": {
+						"team": {
+							"states": {
+								"nodes": [
+									{"id": "state-1", "name": "Todo", "type": "unstarted"},
+									{"id": "state-2", "name": "In Progress", "type": "started"}
+								]
+							}
+						}
+					}
+				}`),
+			}
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+
+		if requestCount == 3 {
+			// Mutation returns success: false
+			response := GraphQLResponse{
+				Data: json.RawMessage(`{
+					"issueUpdate": {
+						"success": false
+					}
+				}`),
+			}
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+	}))
+	defer server.Close()
+
+	client := newTestClient(server.URL)
+	err := client.TransitionIssue(context.Background(), "NUM-70", tracker.StatusInProgress)
+	if err == nil {
+		t.Fatal("expected error when mutation fails, got nil")
+	}
+
+	if !contains(err.Error(), "failed to update issue state") {
+		t.Errorf("expected error containing %q, got %q", "failed to update issue state", err.Error())
+	}
+}
+
+// TestGetAvailableStatuses_GetWorkflowStatesError verifies error handling when
+// getWorkflowStates fails.
+func TestGetAvailableStatuses_GetWorkflowStatesError(t *testing.T) {
+	requestCount := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+
+		if requestCount == 1 {
+			// Resolve identifier successfully
+			response := GraphQLResponse{
+				Data: json.RawMessage(`{
+					"issues": {
+						"nodes": [{
+							"id": "internal-uuid-123",
+							"identifier": "NUM-70",
+							"title": "Test Issue",
+							"state": {"id": "state-1", "name": "Todo", "type": "unstarted"}
+						}]
+					}
+				}`),
+			}
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+
+		if requestCount == 2 {
+			// getWorkflowStates returns error
+			response := GraphQLResponse{
+				Errors: []GraphQLError{{Message: "Team not found"}},
+			}
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+	}))
+	defer server.Close()
+
+	client := newTestClient(server.URL)
+	_, err := client.GetAvailableStatuses(context.Background(), "NUM-70")
+	if err == nil {
+		t.Fatal("expected error when getWorkflowStates fails, got nil")
+	}
+}
+
+// TestGetAvailableStatuses_DuplicateDetection verifies that GetAvailableStatuses
+// properly deduplicates statuses when multiple workflow states map to the same status.
+func TestGetAvailableStatuses_DuplicateDetection(t *testing.T) {
+	requestCount := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+
+		if requestCount == 1 {
+			// Resolve identifier
+			response := GraphQLResponse{
+				Data: json.RawMessage(`{
+					"issues": {
+						"nodes": [{
+							"id": "internal-uuid-123",
+							"identifier": "NUM-70",
+							"title": "Test Issue",
+							"state": {"id": "state-1", "name": "Todo", "type": "unstarted"}
+						}]
+					}
+				}`),
+			}
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+
+		if requestCount == 2 {
+			// Return multiple "started" states that should deduplicate to one StatusInProgress
+			response := GraphQLResponse{
+				Data: json.RawMessage(`{
+					"issue": {
+						"team": {
+							"states": {
+								"nodes": [
+									{"id": "state-1", "name": "Todo", "type": "unstarted"},
+									{"id": "state-2", "name": "In Progress", "type": "started"},
+									{"id": "state-3", "name": "Working", "type": "started"},
+									{"id": "state-4", "name": "In Review", "type": "started"},
+									{"id": "state-5", "name": "Done", "type": "completed"}
+								]
+							}
+						}
+					}
+				}`),
+			}
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+	}))
+	defer server.Close()
+
+	client := newTestClient(server.URL)
+	statuses, err := client.GetAvailableStatuses(context.Background(), "NUM-70")
+	if err != nil {
+		t.Fatalf("GetAvailableStatuses failed: %v", err)
+	}
+
+	// Count occurrences of each status to verify deduplication
+	statusCount := make(map[tracker.Status]int)
+	for _, status := range statuses {
+		statusCount[status]++
+	}
+
+	// Verify no duplicates
+	for status, count := range statusCount {
+		if count > 1 {
+			t.Errorf("status %v appears %d times, expected 1 (deduplication failed)", status, count)
+		}
+	}
+
+	// Verify we got the expected unique statuses
+	// Note: linearStateToStatus converts based on Type field only, so all "started"
+	// states become StatusInProgress regardless of name. InReview is only used in
+	// statusMatches for transitions, not in GetAvailableStatuses.
+	if len(statuses) != 3 {
+		t.Errorf("expected 3 unique statuses (Todo, InProgress, Done), got %d: %v", len(statuses), statuses)
+	}
+
+	// Verify deduplication worked for the multiple "started" states
+	if statusCount[tracker.StatusInProgress] != 1 {
+		t.Errorf("expected StatusInProgress to appear once after deduplication, appeared %d times", statusCount[tracker.StatusInProgress])
+	}
+}
