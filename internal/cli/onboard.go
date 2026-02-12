@@ -589,15 +589,25 @@ func InstallClaudeSkills() error {
 	}
 
 	// Write embedded skill files
-	if err := installSkillFiles(commandsDir); err != nil {
+	if err := installSkillFiles(commandsDir, initForce); err != nil {
 		return fmt.Errorf("failed to install skill files: %w", err)
 	}
 
 	return nil
 }
 
+// InstallSkillFiles installs Claude Code skill files (exported for use in init.go)
+func InstallSkillFiles(force bool) error {
+	commandsDir := ".claude/commands/jig"
+	if err := os.MkdirAll(commandsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create commands directory: %w", err)
+	}
+
+	return installSkillFiles(commandsDir, force)
+}
+
 // installSkillFiles writes embedded skill files to the commands directory
-func installSkillFiles(commandsDir string) error {
+func installSkillFiles(commandsDir string, force bool) error {
 	skillFiles := []string{"plan.md", "implement.md"}
 
 	for _, skillFile := range skillFiles {
@@ -608,8 +618,8 @@ func installSkillFiles(commandsDir string) error {
 
 		destPath := filepath.Join(commandsDir, skillFile)
 
-		// Check if file exists (skip unless --force)
-		if _, err := os.Stat(destPath); err == nil && !initForce {
+		// Check if file exists (skip unless force)
+		if _, err := os.Stat(destPath); err == nil && !force {
 			continue // File exists, don't overwrite
 		}
 

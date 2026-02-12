@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/charleslr/jig/internal/config"
 	"github.com/charleslr/jig/internal/ui"
 	"github.com/spf13/cobra"
 )
@@ -61,6 +62,14 @@ type HookConfig struct {
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
+	// Check if already configured
+	isConfigured := isJigConfigured()
+
+	// If already configured and not forcing, just update hooks and skills
+	if isConfigured && !initForce {
+		return runQuickUpdate()
+	}
+
 	// If interactive and not hooks-only, run full onboarding
 	if ui.IsInteractive() && !initHooksOnly {
 		return runInteractiveInit()
@@ -68,6 +77,36 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// Otherwise, just set up hooks (non-interactive mode)
 	return runHooksOnlyInit()
+}
+
+// isJigConfigured checks if jig has been configured (config.toml exists)
+func isJigConfigured() bool {
+	jigDir, err := config.JigDir()
+	if err != nil {
+		return false
+	}
+	configPath := filepath.Join(jigDir, "config.toml")
+	_, err = os.Stat(configPath)
+	return err == nil
+}
+
+// runQuickUpdate updates hooks and skills without going through the full wizard
+func runQuickUpdate() error {
+	printInfo("Jig is already configured. Updating hooks and skills...")
+	fmt.Println()
+
+	// Install/update Claude skills (this handles both hooks and skill files)
+	if err := InstallClaudeSkills(); err != nil {
+		return fmt.Errorf("failed to update Claude skills: %w", err)
+	}
+
+	printSuccess("Hooks and skills updated successfully")
+	fmt.Println()
+	fmt.Println("Your jig setup is up to date!")
+	fmt.Println()
+	fmt.Println("Use 'jig init --force' to reconfigure from scratch.")
+
+	return nil
 }
 
 // runInteractiveInit runs the full interactive onboarding wizard
@@ -120,9 +159,19 @@ func runHooksOnlyInit() error {
 	}
 
 	// Check if jig hook already exists
-	if !initForce && hasJigHook(rawSettings) {
-		printInfo("Jig hooks already configured in .claude/settings.json")
-		fmt.Println("Use --force to overwrite existing configuration")
+	hooksAlreadyExist := hasJigHook(rawSettings)
+	if !initForce && hooksAlreadyExist {
+		// Hooks exist, just update skills without touching hooks
+		printInfo("Jig hooks already configured. Updating skills...")
+		fmt.Println()
+
+		if err := InstallSkillFiles(initForce); err != nil {
+			return fmt.Errorf("failed to update skills: %w", err)
+		}
+
+		printSuccess("Skills updated successfully")
+		fmt.Println()
+		fmt.Println("Use 'jig init --force' to reinstall hooks.")
 		return nil
 	}
 
