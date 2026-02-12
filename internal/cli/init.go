@@ -126,37 +126,9 @@ func runHooksOnlyInit() error {
 		return nil
 	}
 
-	// Add or update the hooks
-	hooks := getOrCreateHooks(rawSettings)
-
-	// Remove any existing jig hooks first
-	hooks["PreToolUse"] = filterNonJigHooks(hooks["PreToolUse"])
-
-	// Add the jig ExitPlanMode hook
-	preToolUse := hooks["PreToolUse"].([]interface{})
-	preToolUse = append(preToolUse, map[string]interface{}{
-		"matcher": "ExitPlanMode",
-		"hooks": []interface{}{
-			map[string]interface{}{
-				"type":    "command",
-				"command": "jig hook exit-plan-mode",
-			},
-		},
-	})
-	hooks["PreToolUse"] = preToolUse
-	rawSettings["hooks"] = hooks
-
-	// Add permissions for jig commands
-	addJigPermissions(rawSettings)
-
-	// Write back
-	data, err := json.MarshalIndent(rawSettings, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to serialize settings: %w", err)
-	}
-
-	if err := os.WriteFile(settingsPath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write settings.json: %w", err)
+	// Install Claude skills (hooks + skill files)
+	if err := InstallClaudeSkills(); err != nil {
+		return fmt.Errorf("failed to install Claude skills: %w", err)
 	}
 
 	printSuccess("Jig initialized successfully")
@@ -164,6 +136,10 @@ func runHooksOnlyInit() error {
 	fmt.Println("Added to .claude/settings.json:")
 	fmt.Println("  - PreToolUse hook for ExitPlanMode")
 	fmt.Println("  - Permissions for jig commands (auto-approved)")
+	fmt.Println()
+	fmt.Println("Installed Claude Code skills:")
+	fmt.Println("  - /jig:plan")
+	fmt.Println("  - /jig:implement")
 	fmt.Println()
 	fmt.Println("When you exit plan mode, Claude will now prompt you to save your plan.")
 	fmt.Println()

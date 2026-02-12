@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/charleslr/jig/internal/config"
+	"github.com/charleslr/jig/internal/skills"
 	"github.com/charleslr/jig/internal/tracker"
 	"github.com/charleslr/jig/internal/tracker/linear"
 	"github.com/charleslr/jig/internal/ui"
@@ -587,6 +588,36 @@ func InstallClaudeSkills() error {
 		return fmt.Errorf("failed to create commands directory: %w", err)
 	}
 
+	// Write embedded skill files
+	if err := installSkillFiles(commandsDir); err != nil {
+		return fmt.Errorf("failed to install skill files: %w", err)
+	}
+
+	return nil
+}
+
+// installSkillFiles writes embedded skill files to the commands directory
+func installSkillFiles(commandsDir string) error {
+	skillFiles := []string{"plan.md", "implement.md"}
+
+	for _, skillFile := range skillFiles {
+		content, err := skills.EmbeddedSkills.ReadFile(skillFile)
+		if err != nil {
+			return fmt.Errorf("failed to read embedded skill %s: %w", skillFile, err)
+		}
+
+		destPath := filepath.Join(commandsDir, skillFile)
+
+		// Check if file exists (skip unless --force)
+		if _, err := os.Stat(destPath); err == nil && !initForce {
+			continue // File exists, don't overwrite
+		}
+
+		if err := os.WriteFile(destPath, content, 0644); err != nil {
+			return fmt.Errorf("failed to write skill %s: %w", skillFile, err)
+		}
+	}
+
 	return nil
 }
 
@@ -629,6 +660,9 @@ func setupClaudeHooks() error {
 	})
 	hooks["PreToolUse"] = preToolUse
 	rawSettings["hooks"] = hooks
+
+	// Add permissions for jig commands
+	addJigPermissions(rawSettings)
 
 	// Write back
 	data, err := json.MarshalIndent(rawSettings, "", "  ")
