@@ -317,6 +317,23 @@ func (c *Client) getIssueByIdentifier(ctx context.Context, identifier string) (*
 	return linearIssueToTracker(&result.Issues.Nodes[0]), nil
 }
 
+// resolveIssueID converts a human-readable identifier (e.g., "NUM-70") to an internal UUID.
+// If the input is already a UUID, it returns it unchanged.
+func (c *Client) resolveIssueID(ctx context.Context, id string) (string, error) {
+	// If ID contains a hyphen, it's a human-readable identifier (e.g., "NUM-70")
+	// Linear UUIDs don't contain hyphens (they use base62 encoding)
+	if strings.Contains(id, "-") {
+		issue, err := c.getIssueByIdentifier(ctx, id)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve identifier %s: %w", id, err)
+		}
+		return issue.ID, nil
+	}
+
+	// Already an internal UUID, return as-is
+	return id, nil
+}
+
 // SearchIssues searches for issues matching a query
 func (c *Client) SearchIssues(ctx context.Context, searchQuery string) ([]*tracker.Issue, error) {
 	query := `
@@ -666,8 +683,14 @@ func (c *Client) GetComments(ctx context.Context, issueID string) ([]*tracker.Co
 
 // TransitionIssue changes the status of an issue
 func (c *Client) TransitionIssue(ctx context.Context, id string, status tracker.Status) error {
-	// First, get available workflow states
-	states, err := c.getWorkflowStates(ctx, id)
+	// Resolve the identifier to internal UUID if needed
+	internalID, err := c.resolveIssueID(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	// First, get available workflow states (now using internal UUID)
+	states, err := c.getWorkflowStates(ctx, internalID)
 	if err != nil {
 		return err
 	}
@@ -696,7 +719,7 @@ func (c *Client) TransitionIssue(ctx context.Context, id string, status tracker.
 	resp, err := c.execute(ctx, &GraphQLRequest{
 		Query: query,
 		Variables: map[string]interface{}{
-			"id":      id,
+			"id":      internalID,
 			"stateId": stateID,
 		},
 	})
@@ -723,7 +746,13 @@ func (c *Client) TransitionIssue(ctx context.Context, id string, status tracker.
 
 // GetAvailableStatuses returns available status transitions
 func (c *Client) GetAvailableStatuses(ctx context.Context, id string) ([]tracker.Status, error) {
-	states, err := c.getWorkflowStates(ctx, id)
+	// Resolve the identifier to internal UUID if needed
+	internalID, err := c.resolveIssueID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	states, err := c.getWorkflowStates(ctx, internalID)
 	if err != nil {
 		return nil, err
 	}

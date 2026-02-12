@@ -301,3 +301,140 @@ func TestStatusMatches_InProgressExcludesReview(t *testing.T) {
 		})
 	}
 }
+
+// TestResolveIssueID_Identifier verifies that human-readable identifiers
+// (e.g., "NUM-70") are resolved to internal UUIDs via getIssueByIdentifier.
+func TestResolveIssueID_Identifier(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Mock response for getIssueByIdentifier query
+		response := GraphQLResponse{
+			Data: json.RawMessage(`{
+				"issues": {
+					"nodes": [{
+						"id": "internal-uuid-123",
+						"identifier": "NUM-70",
+						"title": "Test Issue",
+						"state": {"id": "state-1", "name": "Todo", "type": "unstarted"}
+					}]
+				}
+			}`),
+		}
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	client := newTestClient(server.URL)
+	resolvedID, err := client.resolveIssueID(context.Background(), "NUM-70")
+	if err != nil {
+		t.Fatalf("resolveIssueID failed: %v", err)
+	}
+
+	if resolvedID != "internal-uuid-123" {
+		t.Errorf("expected resolved ID to be %q, got %q", "internal-uuid-123", resolvedID)
+	}
+}
+
+// TestResolveIssueID_UUID verifies that UUIDs (no hyphens in Linear's base62 format)
+// are returned unchanged without making API calls.
+func TestResolveIssueID_UUID(t *testing.T) {
+	// Create a client with a test server that should never be called
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("API should not be called when resolving a UUID")
+	}))
+	defer server.Close()
+
+	client := newTestClient(server.URL)
+	uuid := "abc123def456"
+	resolvedID, err := client.resolveIssueID(context.Background(), uuid)
+	if err != nil {
+		t.Fatalf("resolveIssueID failed: %v", err)
+	}
+
+	if resolvedID != uuid {
+		t.Errorf("expected resolved ID to be %q, got %q", uuid, resolvedID)
+	}
+}
+
+// TestTransitionIssue_WithIdentifier verifies that TransitionIssue correctly
+// resolves identifiers to UUIDs and uses the internal UUID in the mutation.
+func TestTransitionIssue_WithIdentifier(t *testing.T) {
+	requestCount := 0
+	var capturedMutationRequest GraphQLRequest
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		var req GraphQLRequest
+		json.NewDecoder(r.Body).Decode(&req)
+
+		// First request: getIssueByIdentifier (resolve NUM-70 → internal UUID)
+		if requestCount == 1 {
+			response := GraphQLResponse{
+				Data: json.RawMessage(`{
+					"issues": {
+						"nodes": [{
+							"id": "internal-uuid-123",
+							"identifier": "NUM-70",
+							"title": "Test Issue",
+							"state": {"id": "state-1", "name": "Todo", "type": "unstarted"}
+						}]
+					}
+				}`),
+			}
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+
+		// Second request: getWorkflowStates
+		if requestCount == 2 {
+			response := GraphQLResponse{
+				Data: json.RawMessage(`{
+					"issue": {
+						"team": {
+							"states": {
+								"nodes": [
+									{"id": "state-1", "name": "Todo", "type": "unstarted"},
+									{"id": "state-2", "name": "In Progress", "type": "started"},
+									{"id": "state-3", "name": "Done", "type": "completed"}
+								]
+							}
+						}
+					}
+				}`),
+			}
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+
+		// Third request: issueUpdate mutation
+		if requestCount == 3 {
+			capturedMutationRequest = req
+			response := GraphQLResponse{
+				Data: json.RawMessage(`{
+					"issueUpdate": {
+						"success": true
+					}
+				}`),
+			}
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+	}))
+	defer server.Close()
+
+	client := newTestClient(server.URL)
+	err := client.TransitionIssue(context.Background(), "NUM-70", tracker.StatusInProgress)
+	if err != nil {
+		t.Fatalf("TransitionIssue failed: %v", err)
+	}
+
+	// Verify the mutation used the internal UUID, not the identifier
+	mutationID := capturedMutationRequest.Variables["id"]
+	if mutationID != "internal-uuid-123" {
+		t.Errorf("expected mutation to use internal UUID %q, got %q", "internal-uuid-123", mutationID)
+	}
+
+	// Verify we made exactly 3 requests (resolve + get states + update)
+	if requestCount != 3 {
+		t.Errorf("expected 3 API requests, got %d", requestCount)
+	}
+}
