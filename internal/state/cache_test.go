@@ -478,8 +478,8 @@ Test solution.
 	}
 
 	// Verify metadata
-	if cached.IssueID != "test-get-cached" {
-		t.Errorf("expected IssueID 'test-get-cached', got %q", cached.IssueID)
+	if cached.IssueID != "NUM-123" {
+		t.Errorf("expected IssueID 'NUM-123', got %q", cached.IssueID)
 	}
 	if cached.CachedAt.IsZero() {
 		t.Error("expected CachedAt to be set")
