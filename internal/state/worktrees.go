@@ -27,6 +27,22 @@ type WorktreeInfo struct {
 	LastUsedAt time.Time `json:"last_used_at"`
 }
 
+// StaleReason represents why a worktree is considered stale
+type StaleReason string
+
+const (
+	StaleReasonNotFound     StaleReason = "directory doesn't exist"
+	StaleReasonMerged       StaleReason = "branch has been merged"
+	StaleReasonNoUniqueWork StaleReason = "no unique work"
+	StaleReasonBranchGone   StaleReason = "branch no longer exists"
+)
+
+// StaleWorktreeInfo contains a worktree and the reason it's considered stale
+type StaleWorktreeInfo struct {
+	WorktreeInfo *WorktreeInfo
+	Reason       StaleReason
+}
+
 // NewWorktreeState creates a new worktree state manager
 func NewWorktreeState() (*WorktreeState, error) {
 	jigDir, err := config.JigDir()
@@ -174,45 +190,70 @@ func (ws *WorktreeState) UpdateLastUsed(issueID string) error {
 // FindStale returns worktrees that may be stale
 // A worktree is considered stale if:
 // - The worktree directory no longer exists
-// - The branch has been merged
+// - The branch has been merged (remote was deleted after merge)
+// - The branch has no unique work (no commits ahead + no uncommitted changes)
 // - The branch no longer exists
-func (ws *WorktreeState) FindStale() ([]*WorktreeInfo, error) {
+func (ws *WorktreeState) FindStale() ([]StaleWorktreeInfo, error) {
 	all, err := ws.List()
 	if err != nil {
 		return nil, err
 	}
 
-	var stale []*WorktreeInfo
+	var staleInfos []StaleWorktreeInfo
 	for _, info := range all {
+		var reason StaleReason
 		isStale := false
 
 		// Check if worktree path exists
 		if _, err := os.Stat(info.Path); os.IsNotExist(err) {
 			isStale = true
+			reason = StaleReasonNotFound
 		}
 
-		// Check if branch has been merged
-		if !isStale && info.Branch != "" {
-			merged, err := git.IsBranchMerged(info.Branch)
-			if err == nil && merged {
-				isStale = true
-			}
-		}
-
-		// Check if branch still exists
+		// Check if branch no longer exists
 		if !isStale && info.Branch != "" {
 			exists, err := git.BranchExists(info.Branch)
 			if err == nil && !exists {
 				isStale = true
+				reason = StaleReasonBranchGone
+			}
+		}
+
+		// Check if remote branch was deleted (actual merge)
+		if !isStale && info.Branch != "" {
+			remoteGone, err := git.IsRemoteBranchGone(info.Branch)
+			if err == nil && remoteGone {
+				isStale = true
+				reason = StaleReasonMerged
+			}
+		}
+
+		// Check if branch has no unique work
+		// (no commits ahead of default branch AND no uncommitted changes)
+		if !isStale && info.Branch != "" {
+			defaultBranch, err := git.GetDefaultBranch()
+			if err == nil {
+				hasUnique, err := git.HasUniqueCommits(info.Branch, defaultBranch)
+				if err == nil && !hasUnique {
+					// Also check for uncommitted work in the worktree
+					hasUncommitted, err := git.HasUncommittedWork(info.Path)
+					if err == nil && !hasUncommitted {
+						isStale = true
+						reason = StaleReasonNoUniqueWork
+					}
+				}
 			}
 		}
 
 		if isStale {
-			stale = append(stale, info)
+			staleInfos = append(staleInfos, StaleWorktreeInfo{
+				WorktreeInfo: info,
+				Reason:       reason,
+			})
 		}
 	}
 
-	return stale, nil
+	return staleInfos, nil
 }
 
 // Cleanup removes stale worktrees and their tracking info
@@ -223,7 +264,8 @@ func (ws *WorktreeState) Cleanup() ([]string, error) {
 	}
 
 	var cleaned []string
-	for _, info := range stale {
+	for _, staleInfo := range stale {
+		info := staleInfo.WorktreeInfo
 		// Try to remove the git worktree
 		if _, err := os.Stat(info.Path); err == nil {
 			if err := git.RemoveWorktree(info.Path); err != nil {

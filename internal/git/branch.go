@@ -250,3 +250,68 @@ func ListBranches() ([]string, error) {
 
 	return branches, nil
 }
+
+// HasUniqueCommits checks if a branch has commits not in the target branch
+// Returns true if the branch has work that isn't in target
+func HasUniqueCommits(branch, target string) (bool, error) {
+	// Use git rev-list to count commits in branch that aren't in target
+	cmd := exec.Command("git", "rev-list", "--count", fmt.Sprintf("%s..%s", target, branch))
+	output, err := cmd.Output()
+	if err != nil {
+		return false, fmt.Errorf("failed to count unique commits: %w", err)
+	}
+
+	count := strings.TrimSpace(string(output))
+	// Return true if count > 0
+	return count != "0" && count != "", nil
+}
+
+// HasUncommittedWork checks if a worktree has staged or unstaged changes
+// worktreePath is the absolute path to the worktree directory
+func HasUncommittedWork(worktreePath string) (bool, error) {
+	// Run git status --porcelain in the worktree directory
+	cmd := exec.Command("git", "-C", worktreePath, "status", "--porcelain")
+	output, err := cmd.Output()
+	if err != nil {
+		return false, fmt.Errorf("failed to check worktree status: %w", err)
+	}
+
+	// If output is non-empty, there are uncommitted changes
+	return strings.TrimSpace(string(output)) != "", nil
+}
+
+// IsRemoteBranchGone checks if a branch's remote tracking branch no longer exists
+func IsRemoteBranchGone(branch string) (bool, error) {
+	// Get the upstream tracking branch
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", fmt.Sprintf("%s@{upstream}", branch))
+	output, err := cmd.Output()
+	if err != nil {
+		// No upstream configured, so remote is not "gone"
+		return false, nil
+	}
+
+	upstream := strings.TrimSpace(string(output))
+	if upstream == "" {
+		return false, nil
+	}
+
+	// Extract the remote name and branch name
+	// upstream format is typically "origin/branch-name"
+	parts := strings.SplitN(upstream, "/", 2)
+	if len(parts) != 2 {
+		return false, nil
+	}
+	remoteName := parts[0]
+	remoteBranch := parts[1]
+
+	// Check if the remote ref exists
+	cmd = exec.Command("git", "ls-remote", "--heads", remoteName, remoteBranch)
+	output, err = cmd.Output()
+	if err != nil {
+		// Error running ls-remote, assume remote is not gone
+		return false, nil
+	}
+
+	// If output is empty, the remote branch was deleted
+	return strings.TrimSpace(string(output)) == "", nil
+}

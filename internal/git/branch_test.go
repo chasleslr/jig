@@ -419,3 +419,159 @@ func TestCheckoutBranch(t *testing.T) {
 		})
 	})
 }
+
+func TestHasUniqueCommits(t *testing.T) {
+	repo := NewTestRepo(t)
+	defer repo.Cleanup()
+
+	t.Run("returns true when branch has unique commits", func(t *testing.T) {
+		// Create a feature branch with a unique commit
+		repo.CreateBranch("feature-unique")
+		repo.Checkout("feature-unique")
+		repo.WriteFile("feature.txt", "feature content")
+		repo.Commit("feature commit")
+		repo.Checkout("main")
+
+		repo.InDir(func() {
+			hasUnique, err := HasUniqueCommits("feature-unique", "main")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !hasUnique {
+				t.Error("expected branch to have unique commits")
+			}
+		})
+	})
+
+	t.Run("returns false when branch points to commit in main", func(t *testing.T) {
+		// Create a branch pointing to the same commit as main
+		repo.CreateBranch("no-unique-work")
+
+		repo.InDir(func() {
+			hasUnique, err := HasUniqueCommits("no-unique-work", "main")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if hasUnique {
+				t.Error("expected branch to have no unique commits")
+			}
+		})
+	})
+
+	t.Run("returns false when branch points to old commit in main", func(t *testing.T) {
+		// Make commits on main first
+		repo.WriteFile("file1.txt", "content 1")
+		repo.Commit("commit 1")
+		oldCommit := repo.Git("rev-parse", "HEAD")
+
+		repo.WriteFile("file2.txt", "content 2")
+		repo.Commit("commit 2")
+
+		// Create branch pointing to old commit
+		repo.Git("branch", "old-commit", oldCommit)
+
+		repo.InDir(func() {
+			hasUnique, err := HasUniqueCommits("old-commit", "main")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if hasUnique {
+				t.Error("expected branch pointing to old commit to have no unique commits")
+			}
+		})
+	})
+}
+
+func TestHasUncommittedWork(t *testing.T) {
+	repo := NewTestRepo(t)
+	defer repo.Cleanup()
+
+	t.Run("returns false when worktree is clean", func(t *testing.T) {
+		hasWork, err := HasUncommittedWork(repo.Path)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if hasWork {
+			t.Error("expected clean worktree to have no uncommitted work")
+		}
+	})
+
+	t.Run("returns true when worktree has unstaged changes", func(t *testing.T) {
+		repo.WriteFile("unstaged.txt", "unstaged content")
+
+		hasWork, err := HasUncommittedWork(repo.Path)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !hasWork {
+			t.Error("expected worktree with unstaged changes to have uncommitted work")
+		}
+
+		// Clean up
+		repo.Git("checkout", ".")
+	})
+
+	t.Run("returns true when worktree has staged changes", func(t *testing.T) {
+		repo.WriteFile("staged.txt", "staged content")
+		repo.Git("add", "staged.txt")
+
+		hasWork, err := HasUncommittedWork(repo.Path)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !hasWork {
+			t.Error("expected worktree with staged changes to have uncommitted work")
+		}
+
+		// Clean up
+		repo.Git("reset", "HEAD", "staged.txt")
+		repo.Git("checkout", ".")
+	})
+
+	t.Run("returns true when worktree has new untracked file", func(t *testing.T) {
+		repo.WriteFile("untracked.txt", "untracked content")
+
+		hasWork, err := HasUncommittedWork(repo.Path)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !hasWork {
+			t.Error("expected worktree with untracked file to have uncommitted work")
+		}
+
+		// Clean up
+		repo.Git("clean", "-f")
+	})
+}
+
+func TestIsRemoteBranchGone(t *testing.T) {
+	repo := NewTestRepo(t)
+	defer repo.Cleanup()
+
+	t.Run("returns false when branch has no upstream", func(t *testing.T) {
+		repo.CreateBranch("local-only")
+
+		repo.InDir(func() {
+			gone, err := IsRemoteBranchGone("local-only")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if gone {
+				t.Error("expected branch with no upstream to not be marked as gone")
+			}
+		})
+	})
+
+	t.Run("returns false for main branch", func(t *testing.T) {
+		// main has no remote configured in test repo
+		repo.InDir(func() {
+			gone, err := IsRemoteBranchGone("main")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if gone {
+				t.Error("expected main to not be marked as gone")
+			}
+		})
+	})
+}
