@@ -69,17 +69,9 @@ func runClean(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	// Show what we found
-	for i, info := range stale {
-		reason := "unknown"
-
-		// Check why it's stale
-		if _, err := os.Stat(info.Path); os.IsNotExist(err) {
-			reason = "directory does not exist"
-		} else if merged, _ := git.IsBranchMerged(info.Branch); merged {
-			reason = "branch has been merged"
-		} else if exists, _ := git.BranchExists(info.Branch); !exists {
-			reason = "branch no longer exists"
-		}
+	for i, staleInfo := range stale {
+		info := staleInfo.WorktreeInfo
+		reason := string(staleInfo.Reason)
 
 		fmt.Printf("%d. %s\n", i+1, info.IssueID)
 		fmt.Printf("   Path: %s\n", info.Path)
@@ -94,21 +86,15 @@ func runClean(cmd *cobra.Command, args []string) error {
 	}
 
 	// Remove worktrees
-	var toRemove []*state.WorktreeInfo
+	var toRemove []state.StaleWorktreeInfo
 	if cleanAll {
 		toRemove = stale
 	} else if ui.IsInteractive() {
 		// Build options for multi-select
 		options := make([]ui.SelectOption, len(stale))
-		for i, info := range stale {
-			reason := "unknown"
-			if _, err := os.Stat(info.Path); os.IsNotExist(err) {
-				reason = "directory does not exist"
-			} else if merged, _ := git.IsBranchMerged(info.Branch); merged {
-				reason = "branch has been merged"
-			} else if exists, _ := git.BranchExists(info.Branch); !exists {
-				reason = "branch no longer exists"
-			}
+		for i, staleInfo := range stale {
+			info := staleInfo.WorktreeInfo
+			reason := string(staleInfo.Reason)
 
 			options[i] = ui.SelectOption{
 				Label:       info.IssueID,
@@ -122,24 +108,25 @@ func runClean(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to select worktrees: %w", err)
 		}
 
-		// Map selected IDs back to WorktreeInfo
+		// Map selected IDs back to StaleWorktreeInfo
 		selectedSet := make(map[string]bool)
 		for _, id := range selectedIDs {
 			selectedSet[id] = true
 		}
-		for _, info := range stale {
-			if selectedSet[info.IssueID] {
-				toRemove = append(toRemove, info)
+		for _, staleInfo := range stale {
+			if selectedSet[staleInfo.WorktreeInfo.IssueID] {
+				toRemove = append(toRemove, staleInfo)
 			}
 		}
 	} else {
 		// Non-interactive: prompt for each (fallback)
-		for _, info := range stale {
+		for _, staleInfo := range stale {
+			info := staleInfo.WorktreeInfo
 			fmt.Printf("Remove worktree for %s? [y/N] ", info.IssueID)
 			var response string
 			fmt.Scanln(&response)
 			if response == "y" || response == "Y" {
-				toRemove = append(toRemove, info)
+				toRemove = append(toRemove, staleInfo)
 			}
 		}
 	}
@@ -151,7 +138,8 @@ func runClean(cmd *cobra.Command, args []string) error {
 
 	// Actually remove them
 	removed := 0
-	for _, info := range toRemove {
+	for _, staleInfo := range toRemove {
+		info := staleInfo.WorktreeInfo
 		removeFunc := func() error {
 			// Check if directory exists
 			if _, err := os.Stat(info.Path); err == nil {
@@ -173,7 +161,7 @@ func runClean(cmd *cobra.Command, args []string) error {
 			}
 
 			// Try to delete the branch if it exists and is merged
-			if merged, _ := git.IsBranchMerged(info.Branch); merged {
+			if staleInfo.Reason == state.StaleReasonMerged {
 				git.DeleteBranch(info.Branch, false)
 			}
 
