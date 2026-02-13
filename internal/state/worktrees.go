@@ -199,6 +199,11 @@ func (ws *WorktreeState) FindStale() ([]StaleWorktreeInfo, error) {
 		return nil, err
 	}
 
+	// Pre-fetch expensive data once instead of per-worktree
+	// This avoids repeated network calls and git operations
+	defaultBranch, _ := git.GetDefaultBranch()
+	goneBranches, _ := git.GetGoneBranches()
+
 	var staleInfos []StaleWorktreeInfo
 	for _, info := range all {
 		var reason StaleReason
@@ -220,9 +225,9 @@ func (ws *WorktreeState) FindStale() ([]StaleWorktreeInfo, error) {
 		}
 
 		// Check if remote branch was deleted (actual merge)
+		// Use pre-fetched gone branches to avoid network calls
 		if !isStale && info.Branch != "" {
-			remoteGone, err := git.IsRemoteBranchGone(info.Branch)
-			if err == nil && remoteGone {
+			if goneBranches[info.Branch] {
 				isStale = true
 				reason = StaleReasonMerged
 			}
@@ -230,17 +235,14 @@ func (ws *WorktreeState) FindStale() ([]StaleWorktreeInfo, error) {
 
 		// Check if branch has no unique work
 		// (no commits ahead of default branch AND no uncommitted changes)
-		if !isStale && info.Branch != "" {
-			defaultBranch, err := git.GetDefaultBranch()
-			if err == nil {
-				hasUnique, err := git.HasUniqueCommits(info.Branch, defaultBranch)
-				if err == nil && !hasUnique {
-					// Also check for uncommitted work in the worktree
-					hasUncommitted, err := git.HasUncommittedWork(info.Path)
-					if err == nil && !hasUncommitted {
-						isStale = true
-						reason = StaleReasonNoUniqueWork
-					}
+		if !isStale && info.Branch != "" && defaultBranch != "" {
+			hasUnique, err := git.HasUniqueCommits(info.Branch, defaultBranch)
+			if err == nil && !hasUnique {
+				// Also check for uncommitted work in the worktree
+				hasUncommitted, err := git.HasUncommittedWork(info.Path)
+				if err == nil && !hasUncommitted {
+					isStale = true
+					reason = StaleReasonNoUniqueWork
 				}
 			}
 		}
