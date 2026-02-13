@@ -44,7 +44,6 @@ Create a plan document in markdown with YAML frontmatter:
 
 ```markdown
 ---
-id: ISSUE-ID
 title: Plan Title
 status: draft
 author: Your Name
