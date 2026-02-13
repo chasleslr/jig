@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -133,6 +134,25 @@ Examples:
 	RunE: runPlanSync,
 }
 
+var planLinkCmd = &cobra.Command{
+	Use:   "link <PLAN_ID> <ISSUE_ID>",
+	Short: "Link a plan to an existing issue",
+	Long: `Link an existing plan to an existing Linear issue.
+
+This is useful for:
+- Fixing orphaned plans that failed to link during creation
+- Manually associating a plan with a different issue
+- Recovering from failed issue creation
+
+After linking, the plan content will be synced to the issue.
+
+Examples:
+  jig plan link PLAN-1234567890 NUM-123
+  jig plan link my-plan-id NUM-456`,
+	Args: cobra.ExactArgs(2),
+	RunE: runPlanLink,
+}
+
 func init() {
 	// Add flags to both planCmd and planNewCmd
 	planCmd.Flags().StringVarP(&planNewTitle, "title", "t", "", "plan title (optional, will be generated if not provided)")
@@ -151,6 +171,7 @@ func init() {
 	planCmd.AddCommand(planShowCmd)
 	planCmd.AddCommand(planListCmd)
 	planCmd.AddCommand(planSyncCmd)
+	planCmd.AddCommand(planLinkCmd)
 
 	planSaveCmd.Flags().StringVar(&planSaveSessionID, "session", "", "session ID for tracking the saved plan (used by jig plan)")
 	planSaveCmd.Flags().BoolVar(&planSaveNoSync, "no-sync", false, "don't sync plan to Linear")
@@ -190,6 +211,11 @@ func runPlanSave(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to parse plan: %w", err)
 	}
 
+	// Auto-generate plan ID if not provided
+	if p.ID == "" {
+		p.ID = fmt.Sprintf("PLAN-%d", time.Now().Unix())
+	}
+
 	// Initialize cache
 	if err := state.Init(); err != nil {
 		return fmt.Errorf("failed to initialize cache: %w", err)
@@ -197,6 +223,17 @@ func runPlanSave(cmd *cobra.Command, args []string) error {
 
 	cfg := config.Get()
 	ctx := context.Background()
+
+	// Read session metadata to check for linked issue
+	sessionIssueID := ""
+	if planSaveSessionID != "" {
+		sessionIssueID = readSessionIssueID(planSaveSessionID)
+	}
+
+	// Link to issue from session metadata if provided
+	if sessionIssueID != "" {
+		p.IssueID = sessionIssueID
+	}
 
 	// Create Linear issue if plan has no linked issue and creation is enabled
 	if !planSaveNoSync && shouldCreateIssueForPlan(cfg, p) {
@@ -269,6 +306,51 @@ func readSavedPlanID(sessionID string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(data))
+}
+
+// readSessionIssueID reads the issue ID from session metadata
+// Returns empty string if no issue ID is set in the session
+func readSessionIssueID(sessionID string) string {
+	sessionDir := filepath.Join(".jig", "sessions", sessionID)
+	metadataPath := filepath.Join(sessionDir, "metadata.json")
+	data, err := os.ReadFile(metadataPath)
+	if err != nil {
+		return ""
+	}
+
+	var metadata struct {
+		IssueID string `json:"issue_id"`
+	}
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return ""
+	}
+	return metadata.IssueID
+}
+
+// writeSessionMetadata writes session metadata to track the linked issue
+func writeSessionMetadata(sessionID, issueID string) error {
+	sessionDir := filepath.Join(".jig", "sessions", sessionID)
+	if err := os.MkdirAll(sessionDir, 0755); err != nil {
+		return fmt.Errorf("failed to create session directory: %w", err)
+	}
+
+	metadata := map[string]interface{}{
+		"issue_id":   issueID,
+		"created_at": time.Now().Format(time.RFC3339),
+		"command":    fmt.Sprintf("jig plan %s", issueID),
+	}
+
+	data, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to serialize metadata: %w", err)
+	}
+
+	metadataPath := filepath.Join(sessionDir, "metadata.json")
+	if err := os.WriteFile(metadataPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write metadata: %w", err)
+	}
+
+	return nil
 }
 
 // displaySavedPlanNextSteps checks if a plan was saved during the session and displays next steps
@@ -522,6 +604,13 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 
 	// Generate a unique session ID for parallel planning support
 	sessionID := fmt.Sprintf("%d", time.Now().UnixNano())
+
+	// Write session metadata if planning for an existing issue
+	if issueID != "" {
+		if err := writeSessionMetadata(sessionID, issueID); err != nil {
+			printWarning(fmt.Sprintf("Could not write session metadata: %v", err))
+		}
+	}
 
 	// Prepare the runner context (writes planning context files to .jig/sessions/<session-id>/)
 	prepOpts := &runner.PrepareOpts{
@@ -1032,6 +1121,67 @@ func syncSelectedPlansWithDeps(ctx context.Context, planIDs []string, idToPlan m
 			fmt.Printf("  - %s\n", f)
 		}
 		return fmt.Errorf("failed to sync %d plan(s)", len(failures))
+	}
+
+	return nil
+}
+
+func runPlanLink(cmd *cobra.Command, args []string) error {
+	planID := args[0]
+	issueID := args[1]
+
+	ctx := context.Background()
+	cfg := config.Get()
+
+	// Initialize cache
+	if err := state.Init(); err != nil {
+		return fmt.Errorf("failed to initialize cache: %w", err)
+	}
+
+	// Load plan from cache
+	cached, err := state.DefaultCache.GetCachedPlan(planID)
+	if err != nil {
+		return fmt.Errorf("failed to get plan: %w", err)
+	}
+	if cached == nil || cached.Plan == nil {
+		return fmt.Errorf("plan not found: %s", planID)
+	}
+
+	// Validate that the issue exists in Linear
+	if cfg.Default.Tracker == "linear" {
+		t, err := getTracker(cfg)
+		if err != nil {
+			printWarning(fmt.Sprintf("Could not connect to tracker: %v", err))
+		} else {
+			issue, err := t.GetIssue(ctx, issueID)
+			if err != nil {
+				return fmt.Errorf("Linear issue not found: %s (%w)", issueID, err)
+			}
+			printInfo(fmt.Sprintf("Found issue: %s - %s", issue.Identifier, issue.Title))
+		}
+	}
+
+	// Link the plan to the issue
+	cached.Plan.IssueID = issueID
+	cached.IssueID = issueID
+
+	// Save the updated plan
+	if err := state.DefaultCache.SavePlan(cached.Plan); err != nil {
+		return fmt.Errorf("failed to save plan: %w", err)
+	}
+
+	printSuccess(fmt.Sprintf("Linked plan %s to issue %s", planID, issueID))
+
+	// Sync plan content to issue if Linear sync is enabled
+	if cfg.Default.Tracker == "linear" && cfg.Linear.ShouldSyncPlanOnSave() {
+		if err := syncPlanToLinear(ctx, cfg, cached.Plan); err != nil {
+			printWarning(fmt.Sprintf("Could not sync plan to Linear: %v", err))
+		} else {
+			if err := state.DefaultCache.MarkPlanSynced(planID); err != nil {
+				printWarning(fmt.Sprintf("Plan synced but failed to update sync timestamp: %v", err))
+			}
+			printSuccess(fmt.Sprintf("Plan synced to Linear issue %s", issueID))
+		}
 	}
 
 	return nil

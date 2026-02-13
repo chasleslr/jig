@@ -62,27 +62,7 @@ More custom content here.
 `,
 			wantErr: false,
 		},
-		{
-			name: "missing id in frontmatter",
-			content: `---
-title: Test Plan
-status: draft
-author: testuser
----
-
-# Test Plan
-
-## Problem Statement
-
-Problem.
-
-## Proposed Solution
-
-Solution.
-`,
-			wantErr:     true,
-			errContains: "missing required frontmatter fields: id",
-		},
+		// Note: id is now optional and auto-generated, so this test is removed
 		{
 			name: "missing title in frontmatter",
 			content: `---
@@ -163,7 +143,7 @@ Problem.
 Solution.
 `,
 			wantErr:     true,
-			errContains: "id",
+			errContains: "status", // Now we expect error for status and author, not id
 		},
 		{
 			name: "missing Problem Statement section",
