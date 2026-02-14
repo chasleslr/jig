@@ -28,11 +28,17 @@ func (c *Client) CreateIssueFromPlan(ctx context.Context, p *plan.Plan) (*tracke
 // SyncPlan synchronizes a plan to Linear, creating/updating the main issue
 func (c *Client) SyncPlan(ctx context.Context, p *plan.Plan) error {
 	// Check if main issue exists
+	// Use IssueID when available (new format), fallback to ID (old format)
 	var mainIssue *tracker.Issue
 	var err error
 
-	if p.ID != "" {
-		mainIssue, err = c.GetIssue(ctx, p.ID)
+	issueID := p.IssueID
+	if issueID == "" {
+		issueID = p.ID
+	}
+
+	if issueID != "" {
+		mainIssue, err = c.GetIssue(ctx, issueID)
 		if err != nil {
 			// Issue doesn't exist, create it
 			mainIssue = nil
@@ -49,7 +55,7 @@ func (c *Client) SyncPlan(ctx context.Context, p *plan.Plan) error {
 		if err != nil {
 			return fmt.Errorf("failed to create main issue: %w", err)
 		}
-		p.ID = mainIssue.Identifier
+		p.IssueID = mainIssue.Identifier
 	} else {
 		// Update the main issue
 		desc := buildPlanDescription(p)
@@ -67,12 +73,18 @@ func (c *Client) SyncPlan(ctx context.Context, p *plan.Plan) error {
 
 // SyncPlanStatus syncs a plan's status to Linear
 func (c *Client) SyncPlanStatus(ctx context.Context, p *plan.Plan) error {
-	if p.ID == "" {
+	// Use IssueID when available (new format), fallback to ID (old format)
+	issueID := p.IssueID
+	if issueID == "" {
+		issueID = p.ID
+	}
+
+	if issueID == "" {
 		return fmt.Errorf("plan has no associated issue ID")
 	}
 
 	status := planStatusToTrackerStatus(p.Status)
-	return c.TransitionIssue(ctx, p.ID, status)
+	return c.TransitionIssue(ctx, issueID, status)
 }
 
 // planStatusToTrackerStatus converts a plan status to a tracker status

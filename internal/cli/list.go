@@ -96,12 +96,18 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	// Add plans
 	for _, p := range plans {
-		if item, ok := items[p.ID]; ok {
+		// Use IssueID when available (new format), fallback to ID (old format)
+		issueID := p.IssueID
+		if issueID == "" {
+			issueID = p.ID
+		}
+
+		if item, ok := items[issueID]; ok {
 			item.Title = p.Title
 			item.PlanStatus = string(p.Status)
 		} else {
-			items[p.ID] = &Item{
-				IssueID:    p.ID,
+			items[issueID] = &Item{
+				IssueID:    issueID,
 				Title:      p.Title,
 				PlanStatus: string(p.Status),
 			}
