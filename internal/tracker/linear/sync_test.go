@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/charleslr/jig/internal/plan"
+	"github.com/charleslr/jig/internal/tracker"
 )
 
 func TestFormatPlanComment(t *testing.T) {
@@ -859,6 +860,248 @@ func TestSyncPlanStatus(t *testing.T) {
 		}
 		if capturedIssueNumber != 82 {
 			t.Errorf("expected issue number 82, but captured: %d", capturedIssueNumber)
+		}
+	})
+}
+
+func TestPlanRoundTrip(t *testing.T) {
+	t.Run("preserves all sections through sync and fetch", func(t *testing.T) {
+		// Create a plan with all sections
+		original := &plan.Plan{
+			ID:               "test-plan",
+			IssueID:          "TEST-123",
+			Title:            "Test Plan",
+			ProblemStatement: "The problem",
+			ProposedSolution: "The solution",
+			RawContent: `---
+id: test-plan
+---
+
+## Problem Statement
+
+The problem
+
+## Proposed Solution
+
+The solution
+
+## Acceptance Criteria
+
+- [ ] Criterion 1
+- [ ] Criterion 2
+
+## Implementation Details
+
+Details here
+
+## Verification
+
+1. Step 1
+2. Step 2
+`,
+		}
+
+		// Format as comment (simulates sync to Linear)
+		comment := formatPlanComment(original)
+
+		// Parse back (simulates fetch from Linear)
+		issue := &tracker.Issue{
+			Identifier: "TEST-123",
+			Title:      "Test Plan",
+		}
+		fetched, err := parsePlanFromComment(comment, issue)
+		if err != nil {
+			t.Fatalf("parsePlanFromComment failed: %v", err)
+		}
+
+		// Serialize the fetched plan
+		serialized, err := plan.Serialize(fetched)
+		if err != nil {
+			t.Fatalf("plan.Serialize failed: %v", err)
+		}
+
+		content := string(serialized)
+
+		// Verify all sections are present
+		if !strings.Contains(content, "## Acceptance Criteria") {
+			t.Error("expected '## Acceptance Criteria' section")
+		}
+		if !strings.Contains(content, "Criterion 1") {
+			t.Error("expected 'Criterion 1' in acceptance criteria")
+		}
+		if !strings.Contains(content, "## Implementation Details") {
+			t.Error("expected '## Implementation Details' section")
+		}
+		if !strings.Contains(content, "Details here") {
+			t.Error("expected 'Details here' in implementation details")
+		}
+		if !strings.Contains(content, "## Verification") {
+			t.Error("expected '## Verification' section")
+		}
+		if !strings.Contains(content, "Step 1") {
+			t.Error("expected 'Step 1' in verification")
+		}
+
+		// Verify problem statement and proposed solution are also preserved
+		if !strings.Contains(content, "## Problem Statement") {
+			t.Error("expected '## Problem Statement' section")
+		}
+		if !strings.Contains(content, "The problem") {
+			t.Error("expected problem statement content")
+		}
+		if !strings.Contains(content, "## Proposed Solution") {
+			t.Error("expected '## Proposed Solution' section")
+		}
+		if !strings.Contains(content, "The solution") {
+			t.Error("expected proposed solution content")
+		}
+	})
+
+	t.Run("preserves struct fields after round-trip", func(t *testing.T) {
+		original := &plan.Plan{
+			ID:               "test-plan",
+			IssueID:          "TEST-456",
+			Title:            "Another Test",
+			ProblemStatement: "A specific problem",
+			ProposedSolution: "A specific solution",
+			RawContent: `---
+id: test-plan
+---
+
+## Problem Statement
+
+A specific problem
+
+## Proposed Solution
+
+A specific solution
+`,
+		}
+
+		comment := formatPlanComment(original)
+		issue := &tracker.Issue{
+			Identifier: "TEST-456",
+			Title:      "Another Test",
+		}
+		fetched, err := parsePlanFromComment(comment, issue)
+		if err != nil {
+			t.Fatalf("parsePlanFromComment failed: %v", err)
+		}
+
+		// Verify struct fields are populated
+		if fetched.ProblemStatement != "A specific problem" {
+			t.Errorf("expected ProblemStatement 'A specific problem', got %q", fetched.ProblemStatement)
+		}
+		if fetched.ProposedSolution != "A specific solution" {
+			t.Errorf("expected ProposedSolution 'A specific solution', got %q", fetched.ProposedSolution)
+		}
+		if fetched.IssueID != "TEST-456" {
+			t.Errorf("expected IssueID 'TEST-456', got %q", fetched.IssueID)
+		}
+	})
+}
+
+func TestConvertCommentToBodyContent(t *testing.T) {
+	t.Run("extracts content between separators", func(t *testing.T) {
+		comment := `## 📋 Implementation Plan
+
+**Synced:** 2024-01-01 12:00 UTC
+
+---
+
+### Problem Statement
+
+The problem here
+
+### Proposed Solution
+
+The solution here
+
+### Acceptance Criteria
+
+- AC 1
+- AC 2
+
+---
+
+*This plan was synced by [jig](https://github.com/charleslr/jig)*`
+
+		result := convertCommentToBodyContent(comment)
+
+		// Should convert ### to ##
+		if !strings.Contains(result, "## Problem Statement") {
+			t.Error("expected '## Problem Statement' (converted from ###)")
+		}
+		if !strings.Contains(result, "## Acceptance Criteria") {
+			t.Error("expected '## Acceptance Criteria' (converted from ###)")
+		}
+
+		// Should include content
+		if !strings.Contains(result, "The problem here") {
+			t.Error("expected problem content")
+		}
+		if !strings.Contains(result, "AC 1") {
+			t.Error("expected acceptance criteria content")
+		}
+
+		// Should NOT include header or footer
+		if strings.Contains(result, "📋 Implementation Plan") {
+			t.Error("should not include header")
+		}
+		if strings.Contains(result, "Synced:") {
+			t.Error("should not include synced metadata")
+		}
+		if strings.Contains(result, "This plan was synced") {
+			t.Error("should not include footer")
+		}
+	})
+
+	t.Run("handles empty comment", func(t *testing.T) {
+		result := convertCommentToBodyContent("")
+		if result != "" {
+			t.Errorf("expected empty result for empty input, got %q", result)
+		}
+	})
+}
+
+func TestParseSectionsIntoFields(t *testing.T) {
+	t.Run("extracts problem and solution", func(t *testing.T) {
+		body := `## Problem Statement
+
+This is the problem
+
+## Proposed Solution
+
+This is the solution
+
+## Other Section
+
+Other content`
+
+		p := &plan.Plan{}
+		parseSectionsIntoFields(p, body)
+
+		if p.ProblemStatement != "This is the problem" {
+			t.Errorf("expected ProblemStatement 'This is the problem', got %q", p.ProblemStatement)
+		}
+		if p.ProposedSolution != "This is the solution" {
+			t.Errorf("expected ProposedSolution 'This is the solution', got %q", p.ProposedSolution)
+		}
+	})
+
+	t.Run("handles missing sections", func(t *testing.T) {
+		body := `## Acceptance Criteria
+
+- AC 1`
+
+		p := &plan.Plan{}
+		parseSectionsIntoFields(p, body)
+
+		if p.ProblemStatement != "" {
+			t.Errorf("expected empty ProblemStatement, got %q", p.ProblemStatement)
+		}
+		if p.ProposedSolution != "" {
+			t.Errorf("expected empty ProposedSolution, got %q", p.ProposedSolution)
 		}
 	})
 }
