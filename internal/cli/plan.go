@@ -253,11 +253,20 @@ func runPlanSave(cmd *cobra.Command, args []string) error {
 
 	// Sync to Linear if applicable (adds comment to existing linked issue)
 	if !planSaveNoSync && shouldSyncToLinear(cfg, p) {
-		if err := syncPlanToLinear(ctx, cfg, p); err != nil {
+		// Get cached hash for deduplication (empty string if not previously synced)
+		cachedHash := ""
+		if cached, err := state.DefaultCache.GetCachedPlan(p.ID); err == nil && cached != nil {
+			cachedHash = cached.SyncedContentHash
+		}
+
+		result, err := syncPlanToLinearWithDedup(ctx, cfg, p, cachedHash)
+		if err != nil {
 			printWarning(fmt.Sprintf("Could not sync to Linear: %v", err))
+		} else if result.Skipped {
+			printInfo("Plan content unchanged, skipping sync")
 		} else {
-			// Mark plan as synced to track the sync timestamp
-			if err := state.DefaultCache.MarkPlanSynced(p.ID); err != nil {
+			// Mark plan as synced with the content hash
+			if err := state.DefaultCache.MarkPlanSyncedWithHash(p.ID, result.ContentHash); err != nil {
 				printWarning(fmt.Sprintf("Plan synced but failed to update sync timestamp: %v", err))
 			}
 			printSuccess(fmt.Sprintf("Plan synced to Linear issue %s", p.IssueID))
@@ -830,6 +839,32 @@ func syncPlanWithSyncer(ctx context.Context, syncer tracker.PlanSyncer, p *plan.
 	return syncer.SyncPlanToIssue(ctx, p, labelName)
 }
 
+// syncResult represents the result of a plan sync operation
+type syncResult struct {
+	Synced      bool   // true if sync was performed
+	ContentHash string // the content hash (set regardless of whether sync was performed)
+	Skipped     bool   // true if sync was skipped due to unchanged content
+}
+
+// syncPlanToLinearWithDedup syncs a plan to Linear with content-based deduplication.
+// Returns syncResult indicating whether sync was performed or skipped.
+func syncPlanToLinearWithDedup(ctx context.Context, cfg *config.Config, p *plan.Plan, cachedHash string) (syncResult, error) {
+	// Compute the content hash
+	contentHash := linear.ComputePlanContentHash(p)
+
+	// Check if content is unchanged
+	if cachedHash != "" && cachedHash == contentHash {
+		return syncResult{Synced: false, ContentHash: contentHash, Skipped: true}, nil
+	}
+
+	// Content changed or never synced, proceed with sync
+	if err := syncPlanToLinear(ctx, cfg, p); err != nil {
+		return syncResult{ContentHash: contentHash}, err
+	}
+
+	return syncResult{Synced: true, ContentHash: contentHash, Skipped: false}, nil
+}
+
 // getLinearPlanSyncer creates a Linear client configured as a PlanSyncer
 func getLinearPlanSyncer(cfg *config.Config) (tracker.PlanSyncer, error) {
 	store, err := config.NewStore()
@@ -968,11 +1003,12 @@ func syncSinglePlan(ctx context.Context, cfg *config.Config, planID string) erro
 	labelName := cfg.Linear.GetPlanLabelName()
 
 	deps := planSyncDeps{
-		getCachedPlan:  state.DefaultCache.GetCachedPlan,
-		markPlanSynced: state.DefaultCache.MarkPlanSynced,
+		getCachedPlan:        state.DefaultCache.GetCachedPlan,
+		markPlanSyncedWithHash: state.DefaultCache.MarkPlanSyncedWithHash,
 		syncPlan: func(ctx context.Context, p *plan.Plan) error {
 			return syncPlanWithSyncer(ctx, syncer, p, labelName)
 		},
+		computeContentHash: linear.ComputePlanContentHash,
 	}
 
 	return syncSinglePlanWithDeps(ctx, planID, deps)
@@ -980,9 +1016,10 @@ func syncSinglePlan(ctx context.Context, cfg *config.Config, planID string) erro
 
 // planSyncDeps holds dependencies for sync operations (for testability)
 type planSyncDeps struct {
-	getCachedPlan  func(id string) (*state.CachedPlan, error)
-	markPlanSynced func(id string) error
-	syncPlan       func(ctx context.Context, p *plan.Plan) error
+	getCachedPlan        func(id string) (*state.CachedPlan, error)
+	markPlanSyncedWithHash func(id, hash string) error
+	syncPlan             func(ctx context.Context, p *plan.Plan) error
+	computeContentHash   func(p *plan.Plan) string
 }
 
 // syncSinglePlanWithDeps syncs a specific plan using injected dependencies
@@ -999,13 +1036,22 @@ func syncSinglePlanWithDeps(ctx context.Context, planID string, deps planSyncDep
 		return fmt.Errorf("plan has no linked issue")
 	}
 
+	// Compute content hash for deduplication
+	contentHash := deps.computeContentHash(cached.Plan)
+
+	// Check if content is unchanged
+	if cached.SyncedContentHash != "" && cached.SyncedContentHash == contentHash {
+		printInfo("Plan content unchanged, skipping sync")
+		return nil
+	}
+
 	// Sync to Linear
 	if err := deps.syncPlan(ctx, cached.Plan); err != nil {
 		return fmt.Errorf("failed to sync plan: %w", err)
 	}
 
-	// Mark as synced
-	if err := deps.markPlanSynced(planID); err != nil {
+	// Mark as synced with content hash
+	if err := deps.markPlanSyncedWithHash(planID, contentHash); err != nil {
 		printWarning(fmt.Sprintf("Plan synced but failed to update sync timestamp: %v", err))
 	}
 
@@ -1073,11 +1119,12 @@ func syncPlansInteractive(ctx context.Context, cfg *config.Config) error {
 	labelName := cfg.Linear.GetPlanLabelName()
 
 	deps := planSyncDeps{
-		getCachedPlan:  state.DefaultCache.GetCachedPlan,
-		markPlanSynced: state.DefaultCache.MarkPlanSynced,
+		getCachedPlan:        state.DefaultCache.GetCachedPlan,
+		markPlanSyncedWithHash: state.DefaultCache.MarkPlanSyncedWithHash,
 		syncPlan: func(ctx context.Context, p *plan.Plan) error {
 			return syncPlanWithSyncer(ctx, syncer, p, labelName)
 		},
+		computeContentHash: linear.ComputePlanContentHash,
 	}
 
 	return syncSelectedPlansWithDeps(ctx, selectedIDs, idToPlan, deps)
@@ -1086,6 +1133,7 @@ func syncPlansInteractive(ctx context.Context, cfg *config.Config) error {
 // syncSelectedPlansWithDeps syncs the selected plans using injected dependencies
 func syncSelectedPlansWithDeps(ctx context.Context, planIDs []string, idToPlan map[string]*state.CachedPlan, deps planSyncDeps) error {
 	var successCount int
+	var skippedCount int
 	var failures []string
 
 	for _, planID := range planIDs {
@@ -1095,14 +1143,24 @@ func syncSelectedPlansWithDeps(ctx context.Context, planIDs []string, idToPlan m
 			continue
 		}
 
+		// Compute content hash for deduplication
+		contentHash := deps.computeContentHash(cp.Plan)
+
+		// Check if content is unchanged
+		if cp.SyncedContentHash != "" && cp.SyncedContentHash == contentHash {
+			skippedCount++
+			printInfo(fmt.Sprintf("Skipped %s (content unchanged)", planID))
+			continue
+		}
+
 		// Sync to Linear
 		if err := deps.syncPlan(ctx, cp.Plan); err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", planID, err))
 			continue
 		}
 
-		// Mark as synced
-		if err := deps.markPlanSynced(planID); err != nil {
+		// Mark as synced with content hash
+		if err := deps.markPlanSyncedWithHash(planID, contentHash); err != nil {
 			printWarning(fmt.Sprintf("Plan %s synced but failed to update sync timestamp: %v", planID, err))
 		}
 
@@ -1113,6 +1171,9 @@ func syncSelectedPlansWithDeps(ctx context.Context, planIDs []string, idToPlan m
 	// Report results
 	if successCount > 0 {
 		fmt.Printf("\nSuccessfully synced %d plan(s)\n", successCount)
+	}
+	if skippedCount > 0 {
+		fmt.Printf("Skipped %d plan(s) (content unchanged)\n", skippedCount)
 	}
 
 	if len(failures) > 0 {
@@ -1174,10 +1235,16 @@ func runPlanLink(cmd *cobra.Command, args []string) error {
 
 	// Sync plan content to issue if Linear sync is enabled
 	if cfg.Default.Tracker == "linear" && cfg.Linear.ShouldSyncPlanOnSave() {
-		if err := syncPlanToLinear(ctx, cfg, cached.Plan); err != nil {
+		// Get cached hash for deduplication
+		cachedHash := cached.SyncedContentHash
+
+		result, err := syncPlanToLinearWithDedup(ctx, cfg, cached.Plan, cachedHash)
+		if err != nil {
 			printWarning(fmt.Sprintf("Could not sync plan to Linear: %v", err))
+		} else if result.Skipped {
+			printInfo("Plan content unchanged, skipping sync")
 		} else {
-			if err := state.DefaultCache.MarkPlanSynced(planID); err != nil {
+			if err := state.DefaultCache.MarkPlanSyncedWithHash(planID, result.ContentHash); err != nil {
 				printWarning(fmt.Sprintf("Plan synced but failed to update sync timestamp: %v", err))
 			}
 			printSuccess(fmt.Sprintf("Plan synced to Linear issue %s", issueID))

@@ -742,3 +742,202 @@ func TestSyncPlanToIssue(t *testing.T) {
 		}
 	})
 }
+
+func TestSyncPlanStatus(t *testing.T) {
+	t.Run("returns error when plan has no linked issue", func(t *testing.T) {
+		client := NewClient("test-key", "team-id", "")
+		p := &plan.Plan{
+			ID:      "", // Empty ID (no fallback)
+			IssueID: "", // No linked issue
+		}
+
+		err := client.SyncPlanStatus(context.Background(), p)
+		if err == nil {
+			t.Error("expected error when plan has no linked issue")
+		}
+		if !strings.Contains(err.Error(), "no linked issue") {
+			t.Errorf("expected 'no linked issue' error, got: %v", err)
+		}
+	})
+
+	t.Run("uses IssueID not ID for status sync", func(t *testing.T) {
+		var capturedTeamKey string
+		var capturedIssueNumber int
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var req GraphQLRequest
+			json.NewDecoder(r.Body).Decode(&req)
+
+			// First call: resolveIssueID - issues query with filter (team.key and number)
+			if strings.Contains(req.Query, "issues") && strings.Contains(req.Query, "filter") {
+				if filter, ok := req.Variables["filter"].(map[string]interface{}); ok {
+					if team, ok := filter["team"].(map[string]interface{}); ok {
+						if key, ok := team["key"].(map[string]interface{}); ok {
+							if eq, ok := key["eq"].(string); ok {
+								capturedTeamKey = eq
+							}
+						}
+					}
+					if number, ok := filter["number"].(map[string]interface{}); ok {
+						if eq, ok := number["eq"].(float64); ok {
+							capturedIssueNumber = int(eq)
+						}
+					}
+				}
+				response := GraphQLResponse{
+					Data: json.RawMessage(`{
+						"issues": {
+							"nodes": [{
+								"id": "internal-uuid",
+								"identifier": "NUM-82",
+								"title": "Test Issue",
+								"team": {"id": "team-123", "key": "NUM"},
+								"state": {"id": "state-1", "name": "Todo", "type": "unstarted"}
+							}]
+						}
+					}`),
+				}
+				json.NewEncoder(w).Encode(response)
+				return
+			}
+
+			// Second call: getWorkflowStates - issue(id: $id) query
+			if strings.Contains(req.Query, "GetWorkflowStates") || (strings.Contains(req.Query, "issue") && strings.Contains(req.Query, "team") && strings.Contains(req.Query, "states")) {
+				response := GraphQLResponse{
+					Data: json.RawMessage(`{
+						"issue": {
+							"team": {
+								"states": {
+									"nodes": [
+										{"id": "todo-id", "name": "Todo", "type": "unstarted"},
+										{"id": "in-progress-id", "name": "In Progress", "type": "started"},
+										{"id": "done-id", "name": "Done", "type": "completed"}
+									]
+								}
+							}
+						}
+					}`),
+				}
+				json.NewEncoder(w).Encode(response)
+				return
+			}
+
+			// Third call: IssueUpdate mutation
+			if strings.Contains(req.Query, "issueUpdate") {
+				response := GraphQLResponse{
+					Data: json.RawMessage(`{
+						"issueUpdate": {"success": true}
+					}`),
+				}
+				json.NewEncoder(w).Encode(response)
+				return
+			}
+
+			// Fallback
+			response := GraphQLResponse{
+				Data: json.RawMessage(`{}`),
+			}
+			json.NewEncoder(w).Encode(response)
+		}))
+		defer server.Close()
+
+		client := newTestClient(server.URL)
+		p := &plan.Plan{
+			ID:      "PLAN-1771026009", // Internal plan ID (should NOT be used)
+			IssueID: "NUM-82",          // Linear issue ID (should be used)
+			Status:  plan.StatusInProgress,
+		}
+
+		err := client.SyncPlanStatus(context.Background(), p)
+		if err != nil {
+			t.Fatalf("SyncPlanStatus failed: %v", err)
+		}
+
+		// Verify IssueID (NUM-82) was used by checking the parsed components
+		if capturedTeamKey != "NUM" {
+			t.Errorf("expected team key 'NUM', but captured: %q", capturedTeamKey)
+		}
+		if capturedIssueNumber != 82 {
+			t.Errorf("expected issue number 82, but captured: %d", capturedIssueNumber)
+		}
+	})
+}
+
+func TestComputePlanContentHash(t *testing.T) {
+	t.Run("returns consistent hash for same content", func(t *testing.T) {
+		p := &plan.Plan{
+			ID:               "PLAN-123",
+			Title:            "Test Plan",
+			ProblemStatement: "This is the problem.",
+			ProposedSolution: "This is the solution.",
+		}
+
+		hash1 := ComputePlanContentHash(p)
+		hash2 := ComputePlanContentHash(p)
+
+		if hash1 != hash2 {
+			t.Errorf("hash should be consistent: %q != %q", hash1, hash2)
+		}
+	})
+
+	t.Run("returns different hash for different content", func(t *testing.T) {
+		p1 := &plan.Plan{
+			ID:               "PLAN-123",
+			ProblemStatement: "Problem A",
+		}
+		p2 := &plan.Plan{
+			ID:               "PLAN-123",
+			ProblemStatement: "Problem B",
+		}
+
+		hash1 := ComputePlanContentHash(p1)
+		hash2 := ComputePlanContentHash(p2)
+
+		if hash1 == hash2 {
+			t.Error("hash should be different for different content")
+		}
+	})
+
+	t.Run("returns valid hex string", func(t *testing.T) {
+		p := &plan.Plan{
+			ID:    "PLAN-123",
+			Title: "Test",
+		}
+
+		hash := ComputePlanContentHash(p)
+
+		// SHA256 produces 64 hex characters
+		if len(hash) != 64 {
+			t.Errorf("expected 64 character hex string, got %d characters", len(hash))
+		}
+
+		// Should only contain hex characters
+		for _, c := range hash {
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+				t.Errorf("hash contains non-hex character: %c", c)
+			}
+		}
+	})
+
+	t.Run("includes raw content in hash calculation", func(t *testing.T) {
+		p1 := &plan.Plan{
+			ID:               "PLAN-123",
+			ProblemStatement: "Problem",
+			RawContent:       "",
+		}
+		p2 := &plan.Plan{
+			ID:               "PLAN-123",
+			ProblemStatement: "Problem",
+			RawContent: `## Acceptance Criteria
+- AC 1
+- AC 2`,
+		}
+
+		hash1 := ComputePlanContentHash(p1)
+		hash2 := ComputePlanContentHash(p2)
+
+		if hash1 == hash2 {
+			t.Error("hash should be different when RawContent changes")
+		}
+	})
+}

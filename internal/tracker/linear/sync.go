@@ -2,6 +2,8 @@ package linear
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -80,7 +82,7 @@ func (c *Client) SyncPlanStatus(ctx context.Context, p *plan.Plan) error {
 	}
 
 	if issueID == "" {
-		return fmt.Errorf("plan has no associated issue ID")
+		return fmt.Errorf("plan has no linked issue")
 	}
 
 	status := planStatusToTrackerStatus(p.Status)
@@ -118,6 +120,14 @@ func buildPlanDescription(p *plan.Plan) string {
 	}
 
 	return desc
+}
+
+// ComputePlanContentHash computes a SHA256 hash of the plan content that would be synced.
+// This can be used to detect if the plan content has changed since the last sync.
+func ComputePlanContentHash(p *plan.Plan) string {
+	content := formatPlanComment(p)
+	hash := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(hash[:])
 }
 
 // SyncPlanToIssue syncs a plan's content to its associated Linear issue as a comment
