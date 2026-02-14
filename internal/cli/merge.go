@@ -211,9 +211,13 @@ func runMerge(cmd *cobra.Command, args []string) error {
 	if issueID != "" {
 		printInfo(fmt.Sprintf("Updating issue %s status...", issueID))
 
-		// Initialize state and try to update the plan (supports both plan ID and issue ID)
+		// Initialize state and try to update the plan (with remote fallback)
 		if err := state.Init(); err == nil {
-			if p, _, err := lookupPlanByID(issueID); err == nil && p != nil {
+			if p, _, err := lookupPlanByIDWithFallback(issueID, &LookupPlanOptions{
+				FetchFromRemote: true,
+				Config:          cfg,
+				Context:         ctx,
+			}); err == nil && p != nil {
 				// Create tracker syncer if configured
 				var syncer state.TrackerSyncer
 				if cfg.Default.Tracker == "linear" {

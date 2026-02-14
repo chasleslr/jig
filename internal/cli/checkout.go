@@ -145,11 +145,15 @@ func runCheckout(cmd *cobra.Command, args []string) error {
 		state.DefaultWorktreeState.Untrack(issueID)
 	}
 
-	// Try to get issue title from cache for better branch name
+	// Try to get issue title from cache for better branch name (with remote fallback)
 	var title string
 	if err := state.Init(); err == nil {
-		// First try looking up a plan by the issue ID directly
-		if plan, _, _ := lookupPlanByID(issueID); plan != nil {
+		// First try looking up a plan by the issue ID directly (with remote fallback)
+		if plan, _, _ := lookupPlanByIDWithFallback(issueID, &LookupPlanOptions{
+			FetchFromRemote: true,
+			Config:          cfg,
+			Context:         ctx,
+		}); plan != nil {
 			title = plan.Title
 		} else if meta, _ := state.DefaultCache.GetIssueMetadata(issueID); meta != nil && meta.PlanID != "" {
 			// Fall back to cached plan ID from metadata

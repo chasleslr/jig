@@ -119,8 +119,12 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Show plan info from cache (supports both plan ID and issue ID)
-	plan, _, _ := lookupPlanByID(issueID)
+	// Show plan info from cache with remote fallback
+	plan, _, _ := lookupPlanByIDWithFallback(issueID, &LookupPlanOptions{
+		FetchFromRemote: true,
+		Config:          cfg,
+		Context:         ctx,
+	})
 	if plan != nil {
 		fmt.Println()
 		fmt.Println("## Plan")
