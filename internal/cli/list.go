@@ -20,25 +20,39 @@ var listCmd = &cobra.Command{
 	Short:   "List all active plans and worktrees",
 	Long: `List all jig-managed worktrees and their status.
 
-Shows:
-- Issue ID and title
-- Branch name
-- Worktree path
-- PR status (if any)
-- Last activity`,
+By default, shows an interactive table when running in a TTY with these shortcuts:
+  o      - Open PR in browser (if PR exists)
+  c      - Output worktree path for checkout/cd
+  d      - Show detailed info for selected item
+  enter  - Select and output issue ID
+  q/esc  - Quit
+
+Use --long for non-interactive detailed output, or --json for machine-readable output.
+In non-TTY environments (pipes), falls back to --long output automatically.`,
 	RunE: runList,
 }
 
 var (
-	listLong        bool
-	listJSON        bool
-	listInteractive bool
+	listLong bool
+	listJSON bool
 )
 
 func init() {
 	listCmd.Flags().BoolVarP(&listLong, "long", "l", false, "show detailed information")
 	listCmd.Flags().BoolVar(&listJSON, "json", false, "output as JSON")
-	listCmd.Flags().BoolVarP(&listInteractive, "interactive", "i", false, "interactive selection mode")
+}
+
+// listItem represents an item in the list display
+type listItem struct {
+	IssueID    string
+	Title      string
+	Branch     string
+	Path       string
+	PlanStatus string
+	PRNumber   int
+	PRState    string
+	LastActive time.Time
+	Exists     bool
 }
 
 func runList(cmd *cobra.Command, args []string) error {
@@ -63,23 +77,11 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 
 	// Build a combined list
-	type Item struct {
-		IssueID    string
-		Title      string
-		Branch     string
-		Path       string
-		PlanStatus string
-		PRNumber   int
-		PRState    string
-		LastActive time.Time
-		Exists     bool
-	}
-
-	items := make(map[string]*Item)
+	items := make(map[string]*listItem)
 
 	// Add worktrees
 	for _, wt := range worktrees {
-		item := &Item{
+		item := &listItem{
 			IssueID:    wt.IssueID,
 			Branch:     wt.Branch,
 			Path:       wt.Path,
@@ -106,7 +108,7 @@ func runList(cmd *cobra.Command, args []string) error {
 			item.Title = p.Title
 			item.PlanStatus = string(p.Status)
 		} else {
-			items[issueID] = &Item{
+			items[issueID] = &listItem{
 				IssueID:    issueID,
 				Title:      p.Title,
 				PlanStatus: string(p.Status),
@@ -137,7 +139,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 
 	// Sort by last active (most recent first)
-	var sortedItems []*Item
+	var sortedItems []*listItem
 	for _, item := range items {
 		sortedItems = append(sortedItems, item)
 	}
@@ -145,44 +147,8 @@ func runList(cmd *cobra.Command, args []string) error {
 		return sortedItems[i].LastActive.After(sortedItems[j].LastActive)
 	})
 
-	// Interactive mode
-	if listInteractive && ui.IsInteractive() {
-		options := make([]ui.SelectOption, len(sortedItems))
-		for i, item := range sortedItems {
-			label := item.IssueID
-			if item.Title != "" {
-				label = fmt.Sprintf("%s: %s", item.IssueID, item.Title)
-				if len(label) > 50 {
-					label = label[:47] + "..."
-				}
-			}
-			desc := ""
-			if item.PRNumber > 0 {
-				desc = fmt.Sprintf("PR #%d (%s)", item.PRNumber, item.PRState)
-			} else if item.PlanStatus != "" {
-				desc = item.PlanStatus
-			}
-			options[i] = ui.SelectOption{
-				Label:       label,
-				Value:       item.IssueID,
-				Description: desc,
-			}
-		}
-
-		selected, err := ui.RunSelect("Select an issue:", options)
-		if err != nil {
-			return fmt.Errorf("failed to select: %w", err)
-		}
-		if selected != "" {
-			// Output the selected issue ID (useful for scripting)
-			fmt.Println(selected)
-		}
-		return nil
-	}
-
-	// Print
+	// JSON output (explicit flag only)
 	if listJSON {
-		// Simple JSON output for scripting
 		fmt.Println("[")
 		for i, item := range sortedItems {
 			comma := ","
@@ -202,64 +168,114 @@ func runList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if listLong {
-		// Detailed list
-		for _, item := range sortedItems {
-			fmt.Printf("%s\n", item.IssueID)
+	// Long format (non-interactive) - explicit flag or non-TTY fallback
+	if listLong || !ui.IsInteractive() {
+		return printLongFormat(sortedItems)
+	}
 
-			if item.Title != "" {
-				fmt.Printf("  Title:  %s\n", item.Title)
-			}
-			if item.Branch != "" {
-				fmt.Printf("  Branch: %s\n", item.Branch)
-			}
-			if item.Path != "" {
-				exists := "✓"
-				if !item.Exists {
-					exists = "✗ (missing)"
-				}
-				fmt.Printf("  Path:   %s %s\n", item.Path, exists)
-			}
-			if item.PlanStatus != "" {
-				fmt.Printf("  Plan:   %s\n", item.PlanStatus)
-			}
-			if item.PRNumber > 0 {
-				fmt.Printf("  PR:     #%d (%s)\n", item.PRNumber, item.PRState)
-			}
-			if !item.LastActive.IsZero() {
-				fmt.Printf("  Active: %s\n", formatRelativeTime(item.LastActive))
-			}
-			fmt.Println()
+	// Default: interactive table
+	return runInteractiveList(sortedItems)
+}
+
+// printLongFormat outputs detailed list information
+func printLongFormat(items []*listItem) error {
+	for _, item := range items {
+		fmt.Printf("%s\n", item.IssueID)
+
+		if item.Title != "" {
+			fmt.Printf("  Title:  %s\n", item.Title)
 		}
-	} else {
-		// Compact list
-		fmt.Printf("%-15s %-30s %-10s %s\n", "ISSUE", "TITLE", "STATUS", "PR")
-		fmt.Println(strings.Repeat("-", 70))
-
-		for _, item := range sortedItems {
-			title := item.Title
-			if len(title) > 28 {
-				title = title[:25] + "..."
+		if item.Branch != "" {
+			fmt.Printf("  Branch: %s\n", item.Branch)
+		}
+		if item.Path != "" {
+			exists := "✓"
+			if !item.Exists {
+				exists = "✗ (missing)"
 			}
-			if title == "" {
-				title = "-"
-			}
+			fmt.Printf("  Path:   %s %s\n", item.Path, exists)
+		}
+		if item.PlanStatus != "" {
+			fmt.Printf("  Plan:   %s\n", item.PlanStatus)
+		}
+		if item.PRNumber > 0 {
+			fmt.Printf("  PR:     #%d (%s)\n", item.PRNumber, item.PRState)
+		}
+		if !item.LastActive.IsZero() {
+			fmt.Printf("  Active: %s\n", formatRelativeTime(item.LastActive))
+		}
+		fmt.Println()
+	}
+	return nil
+}
 
-			status := item.PlanStatus
-			if status == "" {
-				status = "-"
-			}
-
-			pr := "-"
-			if item.PRNumber > 0 {
-				pr = fmt.Sprintf("#%d", item.PRNumber)
-			}
-
-			fmt.Printf("%-15s %-30s %-10s %s\n", item.IssueID, title, status, pr)
+// runInteractiveList runs the interactive list table
+func runInteractiveList(items []*listItem) error {
+	listItems := make([]ui.ListItem, len(items))
+	for i, item := range items {
+		listItems[i] = ui.ListItem{
+			IssueID:    item.IssueID,
+			Title:      item.Title,
+			Branch:     item.Branch,
+			Path:       item.Path,
+			PlanStatus: item.PlanStatus,
+			PRNumber:   item.PRNumber,
+			PRState:    item.PRState,
+			LastActive: item.LastActive,
+			Exists:     item.Exists,
 		}
 	}
 
+	result, err := ui.RunListTable("Active Work", listItems)
+	if err != nil {
+		return err
+	}
+
+	switch result.Action {
+	case ui.ListActionSelect:
+		fmt.Println(result.Item.IssueID)
+	case ui.ListActionOpenPR:
+		if result.Item.PRNumber > 0 {
+			return git.OpenPRInBrowser(result.Item.Branch)
+		}
+		fmt.Fprintln(os.Stderr, "No PR exists for this item")
+	case ui.ListActionCheckout:
+		if result.Item.Path != "" && result.Item.Exists {
+			fmt.Println(result.Item.Path)
+		} else {
+			fmt.Fprintln(os.Stderr, "No worktree exists for this item")
+		}
+	case ui.ListActionDetails:
+		printItemDetails(result.Item)
+	}
 	return nil
+}
+
+// printItemDetails prints detailed information about a list item
+func printItemDetails(item *ui.ListItem) {
+	fmt.Printf("%s\n", item.IssueID)
+	if item.Title != "" {
+		fmt.Printf("  Title:  %s\n", item.Title)
+	}
+	if item.Branch != "" {
+		fmt.Printf("  Branch: %s\n", item.Branch)
+	}
+	if item.Path != "" {
+		exists := "✓"
+		if !item.Exists {
+			exists = "✗ (missing)"
+		}
+		fmt.Printf("  Path:   %s %s\n", item.Path, exists)
+	}
+	if item.PlanStatus != "" {
+		fmt.Printf("  Plan:   %s\n", item.PlanStatus)
+	}
+	if item.PRNumber > 0 {
+		fmt.Printf("  PR:     #%d (%s)\n", item.PRNumber, item.PRState)
+	}
+	if !item.LastActive.IsZero() {
+		fmt.Printf("  Active: %s\n", formatRelativeTime(item.LastActive))
+	}
 }
 
 func formatRelativeTime(t time.Time) string {
