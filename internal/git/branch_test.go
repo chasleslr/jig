@@ -575,3 +575,36 @@ func TestIsRemoteBranchGone(t *testing.T) {
 		})
 	})
 }
+
+func TestGetGoneBranches(t *testing.T) {
+	repo := NewTestRepo(t)
+	defer repo.Cleanup()
+
+	t.Run("returns empty map when no branches are gone", func(t *testing.T) {
+		repo.CreateBranch("local-branch")
+
+		repo.InDir(func() {
+			goneBranches, err := GetGoneBranches()
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(goneBranches) != 0 {
+				t.Errorf("expected no gone branches, got %v", goneBranches)
+			}
+		})
+	})
+
+	t.Run("does not include branches without tracking info", func(t *testing.T) {
+		repo.CreateBranch("untracked-branch")
+
+		repo.InDir(func() {
+			goneBranches, err := GetGoneBranches()
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if goneBranches["untracked-branch"] {
+				t.Error("untracked branch should not be marked as gone")
+			}
+		})
+	})
+}

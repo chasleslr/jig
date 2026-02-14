@@ -281,37 +281,53 @@ func HasUncommittedWork(worktreePath string) (bool, error) {
 }
 
 // IsRemoteBranchGone checks if a branch's remote tracking branch no longer exists
+// Note: This makes a network call. For batch operations, use GetGoneBranches() instead.
 func IsRemoteBranchGone(branch string) (bool, error) {
-	// Get the upstream tracking branch
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", fmt.Sprintf("%s@{upstream}", branch))
+	goneBranches, err := GetGoneBranches()
+	if err != nil {
+		return false, err
+	}
+	return goneBranches[branch], nil
+}
+
+// GetGoneBranches returns a set of local branch names whose upstream tracking
+// branch has been deleted. This uses a local-only operation (git branch -vv)
+// and is much faster than checking each branch individually with ls-remote.
+// Note: You should run `git fetch --prune` first if you want up-to-date info.
+func GetGoneBranches() (map[string]bool, error) {
+	// git branch -vv shows tracking info including "[gone]" for deleted upstreams
+	// Example output:
+	//   feature-branch abc1234 [origin/feature-branch: gone] commit message
+	//   main            def5678 [origin/main] commit message
+	cmd := exec.Command("git", "branch", "-vv")
 	output, err := cmd.Output()
 	if err != nil {
-		// No upstream configured, so remote is not "gone"
-		return false, nil
+		return nil, fmt.Errorf("failed to list branches: %w", err)
 	}
 
-	upstream := strings.TrimSpace(string(output))
-	if upstream == "" {
-		return false, nil
+	goneBranches := make(map[string]bool)
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		// Remove leading "* " or "+ " for current/worktree branches
+		line = strings.TrimPrefix(line, "* ")
+		line = strings.TrimPrefix(line, "+ ")
+
+		// Extract branch name (first field)
+		fields := strings.Fields(line)
+		if len(fields) < 1 {
+			continue
+		}
+		branchName := fields[0]
+
+		// Check if the line contains ": gone]" which indicates deleted upstream
+		if strings.Contains(line, ": gone]") {
+			goneBranches[branchName] = true
+		}
 	}
 
-	// Extract the remote name and branch name
-	// upstream format is typically "origin/branch-name"
-	parts := strings.SplitN(upstream, "/", 2)
-	if len(parts) != 2 {
-		return false, nil
-	}
-	remoteName := parts[0]
-	remoteBranch := parts[1]
-
-	// Check if the remote ref exists
-	cmd = exec.Command("git", "ls-remote", "--heads", remoteName, remoteBranch)
-	output, err = cmd.Output()
-	if err != nil {
-		// Error running ls-remote, assume remote is not gone
-		return false, nil
-	}
-
-	// If output is empty, the remote branch was deleted
-	return strings.TrimSpace(string(output)) == "", nil
+	return goneBranches, nil
 }
