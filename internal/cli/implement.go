@@ -89,7 +89,11 @@ func runImplement(cmd *cobra.Command, args []string) error {
 		}
 
 		p = selectedPlan
-		issueID = p.ID
+		// Use IssueID when available (new format), fallback to ID (old format)
+		issueID = p.IssueID
+		if issueID == "" {
+			issueID = p.ID
+		}
 	} else {
 		issueID = args[0]
 
