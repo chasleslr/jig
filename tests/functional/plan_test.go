@@ -128,9 +128,16 @@ func TestPlanShowNonExistent(t *testing.T) {
 	defer env.Cleanup()
 
 	// Try to show a non-existent plan
+	// With remote fallback enabled, this will try to fetch from tracker first
+	// If tracker is not configured, it will fail with a tracker error
+	// If tracker returns nothing, it will fail with "not found"
 	result := env.RunJig("plan", "show", "NONEXISTENT", "--raw")
 	env.AssertFailure(result)
-	env.AssertOutputContains(result, "not found")
+	// Accept either "not found" (when tracker returns nil) or tracker error (when tracker not configured)
+	combinedOutput := result.Stdout + result.Stderr
+	if !strings.Contains(combinedOutput, "not found") && !strings.Contains(combinedOutput, "tracker") {
+		t.Errorf("expected output to contain 'not found' or 'tracker', got:\n%s", combinedOutput)
+	}
 }
 
 func TestPlanSaveEmptyInput(t *testing.T) {

@@ -382,6 +382,8 @@ func runPlanImport(cmd *cobra.Command, args []string) error {
 }
 
 func runPlanShow(cmd *cobra.Command, args []string) error {
+	ctx := context.Background()
+	cfg := config.Get()
 	id := args[0]
 
 	// Initialize cache
@@ -389,8 +391,12 @@ func runPlanShow(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize cache: %w", err)
 	}
 
-	// Look up plan by ID (supports both plan ID and issue ID)
-	p, planID, err := lookupPlanByID(id)
+	// Look up plan by ID with remote fallback
+	p, planID, err := lookupPlanByIDWithFallback(id, &LookupPlanOptions{
+		FetchFromRemote: true,
+		Config:          cfg,
+		Context:         ctx,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to read plan: %w", err)
 	}

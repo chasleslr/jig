@@ -136,10 +136,14 @@ func runReview(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize state: %w", err)
 	}
 
-	// Try to get plan from cache (supports both plan ID and issue ID)
+	// Try to get plan from cache with remote fallback
 	var p interface{}
 	if issueID != "" {
-		if plan, _, err := lookupPlanByID(issueID); err == nil && plan != nil {
+		if plan, _, err := lookupPlanByIDWithFallback(issueID, &LookupPlanOptions{
+			FetchFromRemote: true,
+			Config:          cfg,
+			Context:         ctx,
+		}); err == nil && plan != nil {
 			p = plan
 		}
 	}

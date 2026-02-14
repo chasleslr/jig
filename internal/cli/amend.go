@@ -50,8 +50,12 @@ func runAmend(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize state: %w", err)
 	}
 
-	// Get the plan from cache (supports both plan ID and issue ID)
-	p, planID, err := lookupPlanByID(issueID)
+	// Get the plan from cache with remote fallback
+	p, planID, err := lookupPlanByIDWithFallback(issueID, &LookupPlanOptions{
+		FetchFromRemote: true,
+		Config:          cfg,
+		Context:         ctx,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to get plan: %w", err)
 	}
