@@ -345,6 +345,15 @@ func GetRepoInfo() (owner, repo string, err error) {
 	return info.Owner.Login, info.Name, nil
 }
 
+// OpenPRInBrowser opens the PR for a branch in the default browser
+func OpenPRInBrowser(branch string) error {
+	cmd := exec.Command("gh", "pr", "view", branch, "--web")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to open PR: %s: %w", string(output), err)
+	}
+	return nil
+}
+
 // GetCIStatus returns the CI status for the current branch
 func GetCIStatus() (string, error) {
 	cmd := exec.Command("gh", "pr", "checks", "--json", "state")
