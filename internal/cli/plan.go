@@ -382,11 +382,20 @@ func runPlanImport(cmd *cobra.Command, args []string) error {
 }
 
 func runPlanShow(cmd *cobra.Command, args []string) error {
-	planID := args[0]
+	id := args[0]
 
 	// Initialize cache
 	if err := state.Init(); err != nil {
 		return fmt.Errorf("failed to initialize cache: %w", err)
+	}
+
+	// Look up plan by ID (supports both plan ID and issue ID)
+	p, planID, err := lookupPlanByID(id)
+	if err != nil {
+		return fmt.Errorf("failed to read plan: %w", err)
+	}
+	if p == nil {
+		return fmt.Errorf("plan not found: %s", id)
 	}
 
 	// If --raw flag or non-interactive, output raw markdown
@@ -396,19 +405,10 @@ func runPlanShow(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to read plan: %w", err)
 		}
 		if content == "" {
-			return fmt.Errorf("plan not found: %s", planID)
+			return fmt.Errorf("plan not found: %s", id)
 		}
 		fmt.Println(content)
 		return nil
-	}
-
-	// Get parsed plan for interactive view
-	p, err := state.DefaultCache.GetPlan(planID)
-	if err != nil {
-		return fmt.Errorf("failed to read plan: %w", err)
-	}
-	if p == nil {
-		return fmt.Errorf("plan not found: %s", planID)
 	}
 
 	// Show interactive plan view

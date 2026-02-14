@@ -83,14 +83,12 @@ func TestImplement_NoPlanError(t *testing.T) {
 	defer env.Cleanup()
 
 	// Try to implement a non-existent plan
-	// Without a tracker configured, this should still create a worktree
-	// but with a warning about the plan not being found
+	// Without a plan cached or on the tracker, this should fail
 	result := env.RunJig("implement", "--no-launch", "NONEXISTENT-001")
 
-	// The command should still succeed (it creates a minimal worktree)
-	// but the output should indicate it couldn't find a plan
-	env.AssertSuccess(result)
-	env.AssertOutputContains(result, "Worktree ready")
+	// The command should fail because no plan exists
+	env.AssertFailure(result)
+	env.AssertOutputContains(result, "plan not found")
 }
 
 func TestImplement_OutputsWorktreePath(t *testing.T) {

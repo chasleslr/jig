@@ -115,6 +115,73 @@ func (c *Cache) GetPlan(id string) (*plan.Plan, error) {
 	return cached.Plan, nil
 }
 
+// PlanLookupResult contains the results of looking up a plan by ID.
+// A lookup may find a plan by plan ID, issue ID, or both.
+type PlanLookupResult struct {
+	ByPlanID  *plan.Plan // Plan found by exact plan ID match
+	ByIssueID *plan.Plan // Plan found by issue ID match
+}
+
+// HasConflict returns true if both lookups found different plans
+func (r *PlanLookupResult) HasConflict() bool {
+	if r.ByPlanID == nil || r.ByIssueID == nil {
+		return false
+	}
+	return r.ByPlanID.ID != r.ByIssueID.ID
+}
+
+// Plan returns the single plan if there's no conflict, or nil if there is
+func (r *PlanLookupResult) Plan() *plan.Plan {
+	if r.HasConflict() {
+		return nil
+	}
+	if r.ByPlanID != nil {
+		return r.ByPlanID
+	}
+	return r.ByIssueID
+}
+
+// LookupPlan searches for a plan by both plan ID and issue ID.
+// Returns a result that may contain matches by either or both methods.
+func (c *Cache) LookupPlan(id string) (*PlanLookupResult, error) {
+	result := &PlanLookupResult{}
+
+	// Try exact plan ID match first
+	byPlanID, err := c.GetPlan(id)
+	if err != nil {
+		return nil, err
+	}
+	result.ByPlanID = byPlanID
+
+	// Scan for issue ID match
+	planDir := filepath.Join(c.dir, "plans")
+	entries, err := os.ReadDir(planDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return result, nil
+		}
+		return nil, fmt.Errorf("failed to read plans directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+
+		planID := entry.Name()[:len(entry.Name())-5] // Remove .json
+		p, err := c.GetPlan(planID)
+		if err != nil {
+			continue
+		}
+		if p != nil && p.IssueID == id {
+			result.ByIssueID = p
+			break
+		}
+	}
+
+	return result, nil
+}
+
 // GetPlanMarkdown retrieves the raw markdown for a cached plan
 func (c *Cache) GetPlanMarkdown(id string) (string, error) {
 	path := filepath.Join(c.dir, "plans", id+".md")

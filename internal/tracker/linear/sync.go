@@ -291,3 +291,96 @@ func extractAdditionalSections(rawContent string) string {
 
 	return strings.TrimSpace(sb.String())
 }
+
+// planCommentPrefix is the marker that identifies a plan comment synced to Linear
+const planCommentPrefix = "## 📋 Implementation Plan"
+
+// FetchPlanFromIssue retrieves a plan from an issue's comments on Linear.
+// Returns nil if no plan comment is found.
+func (c *Client) FetchPlanFromIssue(ctx context.Context, issueID string) (*plan.Plan, error) {
+	// Get the issue details
+	issue, err := c.GetIssue(ctx, issueID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get issue: %w", err)
+	}
+
+	// Get comments for the issue
+	comments, err := c.GetComments(ctx, issue.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get comments: %w", err)
+	}
+
+	// Find the most recent plan comment (in case there are multiple syncs)
+	var planComment *tracker.Comment
+	for i := len(comments) - 1; i >= 0; i-- {
+		if strings.HasPrefix(comments[i].Body, planCommentPrefix) {
+			planComment = comments[i]
+			break
+		}
+	}
+
+	if planComment == nil {
+		return nil, nil
+	}
+
+	// Parse the plan from the comment
+	return parsePlanFromComment(planComment.Body, issue)
+}
+
+// parsePlanFromComment extracts plan data from a synced comment
+func parsePlanFromComment(body string, issue *tracker.Issue) (*plan.Plan, error) {
+	// Generate a plan ID based on issue ID
+	planID := fmt.Sprintf("PLAN-%d", time.Now().Unix())
+
+	p := plan.NewPlan(planID, issue.Title, issue.Assignee)
+	p.IssueID = issue.Identifier
+
+	// Parse sections from the comment body
+	lines := strings.Split(body, "\n")
+	var currentSection string
+	var sectionContent strings.Builder
+
+	flushSection := func() {
+		content := strings.TrimSpace(sectionContent.String())
+		if content == "" {
+			return
+		}
+		switch currentSection {
+		case "problem statement":
+			p.ProblemStatement = content
+		case "proposed solution":
+			p.ProposedSolution = content
+		}
+		sectionContent.Reset()
+	}
+
+	for _, line := range lines {
+		// Skip the header and metadata lines
+		if strings.HasPrefix(line, "## 📋") ||
+			strings.HasPrefix(line, "**Synced:**") ||
+			strings.HasPrefix(line, "---") ||
+			strings.HasPrefix(line, "*This plan was synced") {
+			continue
+		}
+
+		// Check for section headers
+		if strings.HasPrefix(line, "### ") {
+			flushSection()
+			sectionName := strings.TrimPrefix(line, "### ")
+			currentSection = strings.ToLower(strings.TrimSpace(sectionName))
+			continue
+		}
+
+		// Accumulate section content
+		if currentSection != "" {
+			sectionContent.WriteString(line)
+			sectionContent.WriteString("\n")
+		}
+	}
+	flushSection()
+
+	// Store the full comment body as raw content for complete preservation
+	p.RawContent = body
+
+	return p, nil
+}

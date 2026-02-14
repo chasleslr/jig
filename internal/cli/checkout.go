@@ -148,8 +148,11 @@ func runCheckout(cmd *cobra.Command, args []string) error {
 	// Try to get issue title from cache for better branch name
 	var title string
 	if err := state.Init(); err == nil {
-		if meta, _ := state.DefaultCache.GetIssueMetadata(issueID); meta != nil {
-			// Use cached plan title if available
+		// First try looking up a plan by the issue ID directly
+		if plan, _, _ := lookupPlanByID(issueID); plan != nil {
+			title = plan.Title
+		} else if meta, _ := state.DefaultCache.GetIssueMetadata(issueID); meta != nil && meta.PlanID != "" {
+			// Fall back to cached plan ID from metadata
 			if plan, _ := state.DefaultCache.GetPlan(meta.PlanID); plan != nil {
 				title = plan.Title
 			}

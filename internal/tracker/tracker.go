@@ -100,6 +100,13 @@ type PlanSyncer interface {
 	SyncPlanToIssue(ctx context.Context, p *plan.Plan, labelName string) error
 }
 
+// PlanFetcher defines the interface for fetching plans from a tracker
+type PlanFetcher interface {
+	// FetchPlanFromIssue retrieves a plan from an issue's comments.
+	// Returns nil if no plan is found.
+	FetchPlanFromIssue(ctx context.Context, issueID string) (*plan.Plan, error)
+}
+
 // Team represents a team in the tracker
 type Team struct {
 	ID   string

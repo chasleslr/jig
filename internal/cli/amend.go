@@ -50,8 +50,8 @@ func runAmend(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize state: %w", err)
 	}
 
-	// Get the plan from cache
-	p, err := state.DefaultCache.GetPlan(issueID)
+	// Get the plan from cache (supports both plan ID and issue ID)
+	p, planID, err := lookupPlanByID(issueID)
 	if err != nil {
 		return fmt.Errorf("failed to get plan: %w", err)
 	}
@@ -76,14 +76,14 @@ func runAmend(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get the plan markdown for editing
-	planMD, err := state.DefaultCache.GetPlanMarkdown(issueID)
+	planMD, err := state.DefaultCache.GetPlanMarkdown(planID)
 	if err != nil || planMD == "" {
 		return fmt.Errorf("failed to get plan content: %w", err)
 	}
 
 	// Write to a temp file for editing
 	cacheDir, _ := config.CacheDir()
-	editPath := fmt.Sprintf("%s/plans/%s-edit.md", cacheDir, issueID)
+	editPath := fmt.Sprintf("%s/plans/%s-edit.md", cacheDir, planID)
 	if err := os.WriteFile(editPath, []byte(planMD), 0644); err != nil {
 		return fmt.Errorf("failed to write edit file: %w", err)
 	}

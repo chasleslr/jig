@@ -211,9 +211,9 @@ func runMerge(cmd *cobra.Command, args []string) error {
 	if issueID != "" {
 		printInfo(fmt.Sprintf("Updating issue %s status...", issueID))
 
-		// Initialize state and try to update the plan
+		// Initialize state and try to update the plan (supports both plan ID and issue ID)
 		if err := state.Init(); err == nil {
-			if p, err := state.DefaultCache.GetPlan(issueID); err == nil && p != nil {
+			if p, _, err := lookupPlanByID(issueID); err == nil && p != nil {
 				// Create tracker syncer if configured
 				var syncer state.TrackerSyncer
 				if cfg.Default.Tracker == "linear" {
