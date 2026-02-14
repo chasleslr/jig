@@ -129,14 +129,16 @@ func TestPlanSyncCmdIsRegistered(t *testing.T) {
 
 func TestSyncSinglePlanWithDeps(t *testing.T) {
 	ctx := context.Background()
+	mockHashFunc := func(p *plan.Plan) string { return "mock-hash-123" }
 
 	t.Run("plan not found returns error", func(t *testing.T) {
 		deps := planSyncDeps{
 			getCachedPlan: func(id string) (*state.CachedPlan, error) {
 				return nil, nil // not found
 			},
-			markPlanSynced: func(id string) error { return nil },
-			syncPlan:       func(ctx context.Context, p *plan.Plan) error { return nil },
+			markPlanSyncedWithHash: func(id, hash string) error { return nil },
+			syncPlan:               func(ctx context.Context, p *plan.Plan) error { return nil },
+			computeContentHash:     mockHashFunc,
 		}
 
 		err := syncSinglePlanWithDeps(ctx, "nonexistent", deps)
@@ -153,8 +155,9 @@ func TestSyncSinglePlanWithDeps(t *testing.T) {
 			getCachedPlan: func(id string) (*state.CachedPlan, error) {
 				return nil, fmt.Errorf("cache read error")
 			},
-			markPlanSynced: func(id string) error { return nil },
-			syncPlan:       func(ctx context.Context, p *plan.Plan) error { return nil },
+			markPlanSyncedWithHash: func(id, hash string) error { return nil },
+			syncPlan:               func(ctx context.Context, p *plan.Plan) error { return nil },
+			computeContentHash:     mockHashFunc,
 		}
 
 		err := syncSinglePlanWithDeps(ctx, "test-plan", deps)
@@ -171,8 +174,9 @@ func TestSyncSinglePlanWithDeps(t *testing.T) {
 			getCachedPlan: func(id string) (*state.CachedPlan, error) {
 				return &state.CachedPlan{Plan: nil}, nil
 			},
-			markPlanSynced: func(id string) error { return nil },
-			syncPlan:       func(ctx context.Context, p *plan.Plan) error { return nil },
+			markPlanSyncedWithHash: func(id, hash string) error { return nil },
+			syncPlan:               func(ctx context.Context, p *plan.Plan) error { return nil },
+			computeContentHash:     mockHashFunc,
 		}
 
 		err := syncSinglePlanWithDeps(ctx, "test-plan", deps)
@@ -191,8 +195,9 @@ func TestSyncSinglePlanWithDeps(t *testing.T) {
 					Plan: &plan.Plan{ID: "test", IssueID: ""},
 				}, nil
 			},
-			markPlanSynced: func(id string) error { return nil },
-			syncPlan:       func(ctx context.Context, p *plan.Plan) error { return nil },
+			markPlanSyncedWithHash: func(id, hash string) error { return nil },
+			syncPlan:               func(ctx context.Context, p *plan.Plan) error { return nil },
+			computeContentHash:     mockHashFunc,
 		}
 
 		err := syncSinglePlanWithDeps(ctx, "test-plan", deps)
@@ -211,10 +216,11 @@ func TestSyncSinglePlanWithDeps(t *testing.T) {
 					Plan: &plan.Plan{ID: "test", IssueID: "NUM-123"},
 				}, nil
 			},
-			markPlanSynced: func(id string) error { return nil },
+			markPlanSyncedWithHash: func(id, hash string) error { return nil },
 			syncPlan: func(ctx context.Context, p *plan.Plan) error {
 				return fmt.Errorf("sync failed")
 			},
+			computeContentHash: mockHashFunc,
 		}
 
 		err := syncSinglePlanWithDeps(ctx, "test-plan", deps)
@@ -226,21 +232,24 @@ func TestSyncSinglePlanWithDeps(t *testing.T) {
 		}
 	})
 
-	t.Run("successful sync calls markPlanSynced", func(t *testing.T) {
+	t.Run("successful sync calls markPlanSyncedWithHash", func(t *testing.T) {
 		markedSynced := false
+		var savedHash string
 		deps := planSyncDeps{
 			getCachedPlan: func(id string) (*state.CachedPlan, error) {
 				return &state.CachedPlan{
 					Plan: &plan.Plan{ID: "test", IssueID: "NUM-123"},
 				}, nil
 			},
-			markPlanSynced: func(id string) error {
+			markPlanSyncedWithHash: func(id, hash string) error {
 				markedSynced = true
+				savedHash = hash
 				return nil
 			},
 			syncPlan: func(ctx context.Context, p *plan.Plan) error {
 				return nil
 			},
+			computeContentHash: mockHashFunc,
 		}
 
 		err := syncSinglePlanWithDeps(ctx, "test-plan", deps)
@@ -248,41 +257,99 @@ func TestSyncSinglePlanWithDeps(t *testing.T) {
 			t.Errorf("unexpected error: %v", err)
 		}
 		if !markedSynced {
-			t.Error("expected markPlanSynced to be called")
+			t.Error("expected markPlanSyncedWithHash to be called")
+		}
+		if savedHash != "mock-hash-123" {
+			t.Errorf("expected hash 'mock-hash-123', got %q", savedHash)
 		}
 	})
 
-	t.Run("markPlanSynced error does not fail the sync", func(t *testing.T) {
+	t.Run("markPlanSyncedWithHash error does not fail the sync", func(t *testing.T) {
 		deps := planSyncDeps{
 			getCachedPlan: func(id string) (*state.CachedPlan, error) {
 				return &state.CachedPlan{
 					Plan: &plan.Plan{ID: "test", IssueID: "NUM-123"},
 				}, nil
 			},
-			markPlanSynced: func(id string) error {
+			markPlanSyncedWithHash: func(id, hash string) error {
 				return fmt.Errorf("mark synced failed")
 			},
 			syncPlan: func(ctx context.Context, p *plan.Plan) error {
 				return nil
 			},
+			computeContentHash: mockHashFunc,
 		}
 
-		// Should succeed despite markPlanSynced error (just logs warning)
+		// Should succeed despite markPlanSyncedWithHash error (just logs warning)
 		err := syncSinglePlanWithDeps(ctx, "test-plan", deps)
 		if err != nil {
 			t.Errorf("sync should succeed even if marking fails: %v", err)
+		}
+	})
+
+	t.Run("skips sync when content hash matches", func(t *testing.T) {
+		syncCalled := false
+		deps := planSyncDeps{
+			getCachedPlan: func(id string) (*state.CachedPlan, error) {
+				return &state.CachedPlan{
+					Plan:              &plan.Plan{ID: "test", IssueID: "NUM-123"},
+					SyncedContentHash: "mock-hash-123", // Same as what mockHashFunc returns
+				}, nil
+			},
+			markPlanSyncedWithHash: func(id, hash string) error { return nil },
+			syncPlan: func(ctx context.Context, p *plan.Plan) error {
+				syncCalled = true
+				return nil
+			},
+			computeContentHash: mockHashFunc,
+		}
+
+		err := syncSinglePlanWithDeps(ctx, "test-plan", deps)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if syncCalled {
+			t.Error("sync should be skipped when content hash matches")
+		}
+	})
+
+	t.Run("syncs when content hash differs", func(t *testing.T) {
+		syncCalled := false
+		deps := planSyncDeps{
+			getCachedPlan: func(id string) (*state.CachedPlan, error) {
+				return &state.CachedPlan{
+					Plan:              &plan.Plan{ID: "test", IssueID: "NUM-123"},
+					SyncedContentHash: "different-hash", // Different from mockHashFunc
+				}, nil
+			},
+			markPlanSyncedWithHash: func(id, hash string) error { return nil },
+			syncPlan: func(ctx context.Context, p *plan.Plan) error {
+				syncCalled = true
+				return nil
+			},
+			computeContentHash: mockHashFunc,
+		}
+
+		err := syncSinglePlanWithDeps(ctx, "test-plan", deps)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if !syncCalled {
+			t.Error("sync should be called when content hash differs")
 		}
 	})
 }
 
 func TestSyncSelectedPlansWithDeps(t *testing.T) {
 	ctx := context.Background()
+	mockHashFunc := func(p *plan.Plan) string { return "mock-hash-" + p.ID }
 
 	t.Run("empty plan IDs returns success", func(t *testing.T) {
 		deps := planSyncDeps{
-			getCachedPlan:  func(id string) (*state.CachedPlan, error) { return nil, nil },
-			markPlanSynced: func(id string) error { return nil },
-			syncPlan:       func(ctx context.Context, p *plan.Plan) error { return nil },
+			getCachedPlan:          func(id string) (*state.CachedPlan, error) { return nil, nil },
+			markPlanSyncedWithHash: func(id, hash string) error { return nil },
+			syncPlan:               func(ctx context.Context, p *plan.Plan) error { return nil },
+			computeContentHash:     mockHashFunc,
 		}
 
 		err := syncSelectedPlansWithDeps(ctx, []string{}, map[string]*state.CachedPlan{}, deps)
@@ -293,9 +360,10 @@ func TestSyncSelectedPlansWithDeps(t *testing.T) {
 
 	t.Run("plan not found in map returns error", func(t *testing.T) {
 		deps := planSyncDeps{
-			getCachedPlan:  func(id string) (*state.CachedPlan, error) { return nil, nil },
-			markPlanSynced: func(id string) error { return nil },
-			syncPlan:       func(ctx context.Context, p *plan.Plan) error { return nil },
+			getCachedPlan:          func(id string) (*state.CachedPlan, error) { return nil, nil },
+			markPlanSyncedWithHash: func(id, hash string) error { return nil },
+			syncPlan:               func(ctx context.Context, p *plan.Plan) error { return nil },
+			computeContentHash:     mockHashFunc,
 		}
 
 		// Plan ID not in the map
@@ -310,14 +378,15 @@ func TestSyncSelectedPlansWithDeps(t *testing.T) {
 
 	t.Run("sync error for one plan reports failure", func(t *testing.T) {
 		deps := planSyncDeps{
-			getCachedPlan:  func(id string) (*state.CachedPlan, error) { return nil, nil },
-			markPlanSynced: func(id string) error { return nil },
+			getCachedPlan:          func(id string) (*state.CachedPlan, error) { return nil, nil },
+			markPlanSyncedWithHash: func(id, hash string) error { return nil },
 			syncPlan: func(ctx context.Context, p *plan.Plan) error {
 				if p.ID == "fail-plan" {
 					return fmt.Errorf("sync failed for this plan")
 				}
 				return nil
 			},
+			computeContentHash: mockHashFunc,
 		}
 
 		idToPlan := map[string]*state.CachedPlan{
@@ -336,18 +405,19 @@ func TestSyncSelectedPlansWithDeps(t *testing.T) {
 
 	t.Run("all plans sync successfully", func(t *testing.T) {
 		syncedPlans := make(map[string]bool)
-		markedPlans := make(map[string]bool)
+		markedPlans := make(map[string]string)
 
 		deps := planSyncDeps{
 			getCachedPlan: func(id string) (*state.CachedPlan, error) { return nil, nil },
-			markPlanSynced: func(id string) error {
-				markedPlans[id] = true
+			markPlanSyncedWithHash: func(id, hash string) error {
+				markedPlans[id] = hash
 				return nil
 			},
 			syncPlan: func(ctx context.Context, p *plan.Plan) error {
 				syncedPlans[p.ID] = true
 				return nil
 			},
+			computeContentHash: mockHashFunc,
 		}
 
 		idToPlan := map[string]*state.CachedPlan{
@@ -365,23 +435,24 @@ func TestSyncSelectedPlansWithDeps(t *testing.T) {
 			t.Error("expected all plans to be synced")
 		}
 
-		// Verify all plans were marked as synced
-		if !markedPlans["plan-1"] || !markedPlans["plan-2"] {
-			t.Error("expected all plans to be marked as synced")
+		// Verify all plans were marked as synced with hashes
+		if markedPlans["plan-1"] != "mock-hash-plan-1" || markedPlans["plan-2"] != "mock-hash-plan-2" {
+			t.Error("expected all plans to be marked as synced with correct hashes")
 		}
 	})
 
-	t.Run("markPlanSynced error does not fail the batch", func(t *testing.T) {
+	t.Run("markPlanSyncedWithHash error does not fail the batch", func(t *testing.T) {
 		syncCount := 0
 		deps := planSyncDeps{
 			getCachedPlan: func(id string) (*state.CachedPlan, error) { return nil, nil },
-			markPlanSynced: func(id string) error {
+			markPlanSyncedWithHash: func(id, hash string) error {
 				return fmt.Errorf("mark failed")
 			},
 			syncPlan: func(ctx context.Context, p *plan.Plan) error {
 				syncCount++
 				return nil
 			},
+			computeContentHash: mockHashFunc,
 		}
 
 		idToPlan := map[string]*state.CachedPlan{
@@ -399,14 +470,15 @@ func TestSyncSelectedPlansWithDeps(t *testing.T) {
 
 	t.Run("mixed success and failure counts correctly", func(t *testing.T) {
 		deps := planSyncDeps{
-			getCachedPlan:  func(id string) (*state.CachedPlan, error) { return nil, nil },
-			markPlanSynced: func(id string) error { return nil },
+			getCachedPlan:          func(id string) (*state.CachedPlan, error) { return nil, nil },
+			markPlanSyncedWithHash: func(id, hash string) error { return nil },
 			syncPlan: func(ctx context.Context, p *plan.Plan) error {
 				if strings.HasPrefix(p.ID, "fail") {
 					return fmt.Errorf("sync error")
 				}
 				return nil
 			},
+			computeContentHash: mockHashFunc,
 		}
 
 		idToPlan := map[string]*state.CachedPlan{
@@ -422,6 +494,46 @@ func TestSyncSelectedPlansWithDeps(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "failed to sync 2 plan") {
 			t.Errorf("expected 2 failures, got: %v", err)
+		}
+	})
+
+	t.Run("skips plans with unchanged content hash", func(t *testing.T) {
+		syncedPlans := make(map[string]bool)
+
+		deps := planSyncDeps{
+			getCachedPlan:          func(id string) (*state.CachedPlan, error) { return nil, nil },
+			markPlanSyncedWithHash: func(id, hash string) error { return nil },
+			syncPlan: func(ctx context.Context, p *plan.Plan) error {
+				syncedPlans[p.ID] = true
+				return nil
+			},
+			computeContentHash: mockHashFunc,
+		}
+
+		idToPlan := map[string]*state.CachedPlan{
+			"unchanged-plan": {
+				Plan:              &plan.Plan{ID: "unchanged-plan", IssueID: "NUM-1"},
+				SyncedContentHash: "mock-hash-unchanged-plan", // Same as mockHashFunc would return
+			},
+			"changed-plan": {
+				Plan:              &plan.Plan{ID: "changed-plan", IssueID: "NUM-2"},
+				SyncedContentHash: "old-hash", // Different from mockHashFunc
+			},
+		}
+
+		err := syncSelectedPlansWithDeps(ctx, []string{"unchanged-plan", "changed-plan"}, idToPlan, deps)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+
+		// unchanged-plan should be skipped
+		if syncedPlans["unchanged-plan"] {
+			t.Error("unchanged-plan should be skipped")
+		}
+
+		// changed-plan should be synced
+		if !syncedPlans["changed-plan"] {
+			t.Error("changed-plan should be synced")
 		}
 	})
 }

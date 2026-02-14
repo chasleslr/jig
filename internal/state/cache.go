@@ -18,11 +18,12 @@ type Cache struct {
 
 // CachedPlan stores plan data with metadata
 type CachedPlan struct {
-	Plan      *plan.Plan `json:"plan"`
-	IssueID   string     `json:"issue_id"`
-	CachedAt  time.Time  `json:"cached_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
-	SyncedAt  *time.Time `json:"synced_at,omitempty"`
+	Plan             *plan.Plan `json:"plan"`
+	IssueID          string     `json:"issue_id"`
+	CachedAt         time.Time  `json:"cached_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+	SyncedAt         *time.Time `json:"synced_at,omitempty"`
+	SyncedContentHash string    `json:"synced_content_hash,omitempty"`
 }
 
 // NeedsSync returns true if the plan should be synced to the tracker.
@@ -219,6 +220,11 @@ func (c *Cache) ListCachedPlans() ([]*CachedPlan, error) {
 
 // MarkPlanSynced updates the SyncedAt timestamp for a cached plan
 func (c *Cache) MarkPlanSynced(id string) error {
+	return c.MarkPlanSyncedWithHash(id, "")
+}
+
+// MarkPlanSyncedWithHash updates the SyncedAt timestamp and content hash for a cached plan
+func (c *Cache) MarkPlanSyncedWithHash(id, contentHash string) error {
 	cached, err := c.GetCachedPlan(id)
 	if err != nil {
 		return fmt.Errorf("failed to get cached plan: %w", err)
@@ -229,6 +235,9 @@ func (c *Cache) MarkPlanSynced(id string) error {
 
 	now := time.Now()
 	cached.SyncedAt = &now
+	if contentHash != "" {
+		cached.SyncedContentHash = contentHash
+	}
 
 	data, err := json.MarshalIndent(cached, "", "  ")
 	if err != nil {
