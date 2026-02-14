@@ -108,7 +108,7 @@ func runHookExitPlanMode(cmd *cobra.Command, args []string) error {
 	if _, err := os.Stat(markerPath); err == nil {
 		// Plan already saved, allow exit and clean up marker
 		os.Remove(markerPath)
-		outputHookResponse("allow", "Plan has been saved. You may now exit plan mode.")
+		outputHookResponse("allow", "Plan has been saved. You may now exit plan mode.", "")
 		return nil
 	}
 
@@ -117,7 +117,7 @@ func runHookExitPlanMode(cmd *cobra.Command, args []string) error {
 	if _, err := os.Stat(skipMarkerPath); err == nil {
 		// User chose to skip, allow exit and clean up marker
 		os.Remove(skipMarkerPath)
-		outputHookResponse("allow", "")
+		outputHookResponse("allow", "", "")
 		return nil
 	}
 
@@ -126,12 +126,18 @@ func runHookExitPlanMode(cmd *cobra.Command, args []string) error {
 
 	if planFile == "" {
 		// No plan file found, allow exit
-		outputHookResponse("allow", "")
+		outputHookResponse("allow", "", "")
 		return nil
 	}
 
-	// Plan exists but not saved - deny and prompt user to save or discard
-	outputHookResponse("deny", buildExitPlanModePrompt(planFile, sessionID))
+	// Read full plan content for user display via systemMessage
+	planContent := ""
+	if content, err := os.ReadFile(planFile); err == nil {
+		planContent = formatPlanPreview(planFile, string(content))
+	}
+
+	// Plan exists but not saved - show plan to user, prompt to save or discard
+	outputHookResponse("deny", buildExitPlanModePrompt(planFile, sessionID), planContent)
 	return nil
 }
 
@@ -265,13 +271,19 @@ type HookSpecificOutput struct {
 // HookOutput represents the JSON output for Claude Code hooks
 // The response must be wrapped in hookSpecificOutput per the Claude Code protocol
 type HookOutput struct {
+	// SystemMessage is displayed directly to the user (not shown to Claude)
+	// Use this for content the user needs to see, like the full plan preview
+	SystemMessage      string             `json:"systemMessage,omitempty"`
 	HookSpecificOutput HookSpecificOutput `json:"hookSpecificOutput"`
 }
 
 // outputHookResponse outputs a JSON hook response to stdout
 // The response uses the hookSpecificOutput wrapper format required by Claude Code
-func outputHookResponse(decision, reason string) {
+// - systemMessage: Displayed directly to the user (for content like plan preview)
+// - reason: Instructions for Claude (not shown directly to user)
+func outputHookResponse(decision, reason, systemMessage string) {
 	output := HookOutput{
+		SystemMessage: systemMessage,
 		HookSpecificOutput: HookSpecificOutput{
 			HookEventName:            "PreToolUse",
 			PermissionDecision:       decision,
@@ -282,22 +294,8 @@ func outputHookResponse(decision, reason string) {
 	fmt.Println(string(data))
 }
 
-// readPlanSummary reads the plan file and returns a brief summary
-func readPlanSummary(planFile string) string {
-	content, err := os.ReadFile(planFile)
-	if err != nil {
-		return ""
-	}
-
-	// Return first 500 chars as summary, or full content if shorter
-	text := string(content)
-	if len(text) > 500 {
-		return text[:500] + "..."
-	}
-	return text
-}
-
 // buildExitPlanModePrompt builds the prompt for Claude to show the user
+// Note: The plan content is now shown to the user via systemMessage, not in this prompt
 func buildExitPlanModePrompt(planFile, sessionID string) string {
 	// Build the marker command with session ID if available
 	markSkipCmd := "jig hook mark-skip-save"
@@ -305,22 +303,8 @@ func buildExitPlanModePrompt(planFile, sessionID string) string {
 		markSkipCmd = fmt.Sprintf("jig hook mark-skip-save --session %s", sessionID)
 	}
 
-	// Read plan summary for context
-	planSummary := readPlanSummary(planFile)
-	planContext := ""
-	if planSummary != "" {
-		planContext = fmt.Sprintf(`
-Plan file: %s
-Plan preview:
----
-%s
----
+	return fmt.Sprintf(`The user has been shown the full plan content above.
 
-`, planFile, planSummary)
-	}
-
-	return fmt.Sprintf(`Before exiting plan mode, ask the user what they want to do with their plan.
-%s
 Use the AskUserQuestion tool with these options:
 
 question: "What would you like to do with your plan?"
@@ -340,5 +324,18 @@ Based on the user's choice:
 - If "Exit without saving":
   1. Run: %s
   2. Call ExitPlanMode again
-`, planContext, planFile, markSkipCmd)
+`, planFile, markSkipCmd)
+}
+
+// formatPlanPreview formats the plan content for display to the user via systemMessage
+func formatPlanPreview(planFile, content string) string {
+	return fmt.Sprintf(`
+════════════════════════════════════════════════════════════════════════════════
+📋 PLAN PREVIEW: %s
+════════════════════════════════════════════════════════════════════════════════
+
+%s
+
+════════════════════════════════════════════════════════════════════════════════
+`, planFile, content)
 }

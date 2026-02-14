@@ -441,54 +441,29 @@ func TestHookOutput(t *testing.T) {
 	})
 }
 
-func TestReadPlanSummary(t *testing.T) {
-	// Create a temporary directory
-	tmpDir, err := os.MkdirTemp("", "jig-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+func TestFormatPlanPreview(t *testing.T) {
+	t.Run("formats plan with header and footer", func(t *testing.T) {
+		content := "# My Plan\n\nThis is my plan content."
+		result := formatPlanPreview("/path/to/plan.md", content)
 
-	t.Run("short plan file", func(t *testing.T) {
-		planContent := "# My Plan\n\nThis is a short plan."
-		planFile := filepath.Join(tmpDir, "short-plan.md")
-		err := os.WriteFile(planFile, []byte(planContent), 0644)
-		if err != nil {
-			t.Fatalf("failed to write plan file: %v", err)
+		// Check that it contains the plan file path
+		if !contains(result, "/path/to/plan.md") {
+			t.Error("expected result to contain plan file path")
 		}
 
-		summary := readPlanSummary(planFile)
-		if summary != planContent {
-			t.Errorf("expected full content for short plan, got: %s", summary)
-		}
-	})
-
-	t.Run("long plan file truncated", func(t *testing.T) {
-		// Create content longer than 500 chars
-		planContent := "# My Plan\n\n"
-		for i := 0; i < 100; i++ {
-			planContent += "This is line number " + string(rune('0'+i%10)) + " of the plan content.\n"
+		// Check that it contains the content
+		if !contains(result, "# My Plan") {
+			t.Error("expected result to contain plan content")
 		}
 
-		planFile := filepath.Join(tmpDir, "long-plan.md")
-		err := os.WriteFile(planFile, []byte(planContent), 0644)
-		if err != nil {
-			t.Fatalf("failed to write plan file: %v", err)
+		// Check that it has visual separators
+		if !contains(result, "═") {
+			t.Error("expected result to contain visual separators")
 		}
 
-		summary := readPlanSummary(planFile)
-		if len(summary) > 510 { // 500 + "..."
-			t.Errorf("expected truncated summary, got length: %d", len(summary))
-		}
-		if !contains(summary, "...") {
-			t.Error("truncated summary should end with ...")
-		}
-	})
-
-	t.Run("non-existent file", func(t *testing.T) {
-		summary := readPlanSummary("/nonexistent/path/plan.md")
-		if summary != "" {
-			t.Errorf("expected empty string for non-existent file, got: %s", summary)
+		// Check that it has the plan preview header
+		if !contains(result, "PLAN PREVIEW") {
+			t.Error("expected result to contain PLAN PREVIEW header")
 		}
 	})
 }
@@ -503,7 +478,7 @@ func TestOutputHookResponse(t *testing.T) {
 		}
 		os.Stdout = w
 
-		outputHookResponse("deny", "Test reason")
+		outputHookResponse("deny", "Test reason", "")
 
 		w.Close()
 		os.Stdout = oldStdout
@@ -553,7 +528,7 @@ func TestOutputHookResponse(t *testing.T) {
 		}
 		os.Stdout = w
 
-		outputHookResponse("allow", "")
+		outputHookResponse("allow", "", "")
 
 		w.Close()
 		os.Stdout = oldStdout
@@ -586,6 +561,72 @@ func TestOutputHookResponse(t *testing.T) {
 		// Verify permissionDecisionReason is omitted (due to omitempty)
 		if _, exists := hookOutput["permissionDecisionReason"]; exists && hookOutput["permissionDecisionReason"] != "" {
 			t.Errorf("expected permissionDecisionReason to be empty or omitted, got: %v", hookOutput["permissionDecisionReason"])
+		}
+	})
+
+	t.Run("includes systemMessage when provided", func(t *testing.T) {
+		// Capture stdout
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdout = w
+
+		outputHookResponse("deny", "Test reason", "This is the system message for the user")
+
+		w.Close()
+		os.Stdout = oldStdout
+
+		var output []byte
+		output, err = io.ReadAll(r)
+		if err != nil {
+			t.Fatalf("failed to read output: %v", err)
+		}
+
+		jsonStr := string(output)
+
+		// Parse the JSON to verify structure
+		var result map[string]interface{}
+		if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
+			t.Fatalf("failed to parse JSON output: %v\nOutput was: %s", err, jsonStr)
+		}
+
+		// Verify systemMessage is included at top level
+		systemMessage, ok := result["systemMessage"].(string)
+		if !ok {
+			t.Fatalf("expected systemMessage to be present, got: %s", jsonStr)
+		}
+		if systemMessage != "This is the system message for the user" {
+			t.Errorf("expected systemMessage 'This is the system message for the user', got: %v", systemMessage)
+		}
+	})
+
+	t.Run("omits systemMessage when empty", func(t *testing.T) {
+		// Capture stdout
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdout = w
+
+		outputHookResponse("allow", "", "")
+
+		w.Close()
+		os.Stdout = oldStdout
+
+		var output []byte
+		output, err = io.ReadAll(r)
+		if err != nil {
+			t.Fatalf("failed to read output: %v", err)
+		}
+
+		jsonStr := string(output)
+
+		// Verify systemMessage is not in the output (due to omitempty)
+		if contains(jsonStr, "systemMessage") {
+			t.Errorf("expected systemMessage to be omitted when empty, got: %s", jsonStr)
 		}
 	})
 }
