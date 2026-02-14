@@ -335,8 +335,61 @@ func parsePlanFromComment(body string, issue *tracker.Issue) (*plan.Plan, error)
 	p := plan.NewPlan(planID, issue.Title, issue.Assignee)
 	p.IssueID = issue.Identifier
 
-	// Parse sections from the comment body
-	lines := strings.Split(body, "\n")
+	// Extract actual plan content from comment format
+	planBody := convertCommentToBodyContent(body)
+
+	// Create a synthetic raw content with frontmatter delimiters
+	// so that extractBodyFromRawContent() can properly extract the body
+	p.RawContent = fmt.Sprintf("---\n---\n%s", planBody)
+
+	// Parse Problem Statement and Proposed Solution into struct fields
+	// for code that accesses them directly
+	parseSectionsIntoFields(p, planBody)
+
+	return p, nil
+}
+
+// convertCommentToBodyContent extracts the plan body from comment format.
+// Input: "## 📋 Implementation Plan\n**Synced:**...\n---\n### Problem Statement\n..."
+// Output: "## Problem Statement\n...\n## Acceptance Criteria\n..."
+func convertCommentToBodyContent(commentBody string) string {
+	var sb strings.Builder
+	lines := strings.Split(commentBody, "\n")
+	inContent := false
+
+	for _, line := range lines {
+		// Skip comment header/metadata
+		if strings.HasPrefix(line, "## 📋") ||
+			strings.HasPrefix(line, "**Synced:**") ||
+			strings.HasPrefix(line, "*This plan was synced") {
+			continue
+		}
+
+		// Start capturing after the first ---
+		if line == "---" {
+			if !inContent {
+				inContent = true
+				continue
+			}
+			// Second --- is the footer separator, stop here
+			break
+		}
+
+		if inContent {
+			// Convert ### headers back to ## headers
+			if strings.HasPrefix(line, "### ") {
+				line = "##" + strings.TrimPrefix(line, "###")
+			}
+			sb.WriteString(line)
+			sb.WriteString("\n")
+		}
+	}
+
+	return strings.TrimSpace(sb.String())
+}
+
+// parseSectionsIntoFields extracts known sections into Plan struct fields
+func parseSectionsIntoFields(p *plan.Plan, body string) {
 	var currentSection string
 	var sectionContent strings.Builder
 
@@ -354,19 +407,12 @@ func parsePlanFromComment(body string, issue *tracker.Issue) (*plan.Plan, error)
 		sectionContent.Reset()
 	}
 
+	lines := strings.Split(body, "\n")
 	for _, line := range lines {
-		// Skip the header and metadata lines
-		if strings.HasPrefix(line, "## 📋") ||
-			strings.HasPrefix(line, "**Synced:**") ||
-			strings.HasPrefix(line, "---") ||
-			strings.HasPrefix(line, "*This plan was synced") {
-			continue
-		}
-
-		// Check for section headers
-		if strings.HasPrefix(line, "### ") {
+		// Check for section headers (## headers)
+		if strings.HasPrefix(line, "## ") {
 			flushSection()
-			sectionName := strings.TrimPrefix(line, "### ")
+			sectionName := strings.TrimPrefix(line, "## ")
 			currentSection = strings.ToLower(strings.TrimSpace(sectionName))
 			continue
 		}
@@ -378,9 +424,4 @@ func parsePlanFromComment(body string, issue *tracker.Issue) (*plan.Plan, error)
 		}
 	}
 	flushSection()
-
-	// Store the full comment body as raw content for complete preservation
-	p.RawContent = body
-
-	return p, nil
 }
