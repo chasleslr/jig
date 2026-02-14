@@ -80,6 +80,15 @@ func TestRunImplement_RunnerNotFound(t *testing.T) {
 	tmpDir := createTestGitRepo(t)
 	defer os.RemoveAll(tmpDir)
 
+	// Set up JIG_HOME with a cached plan
+	jigHome := createTestJigHome(t)
+	defer os.RemoveAll(jigHome)
+	os.Setenv("JIG_HOME", jigHome)
+	defer os.Unsetenv("JIG_HOME")
+
+	// Save a plan to cache so we get past the plan lookup stage
+	createTestPlanInCache(t, jigHome, "TEST-123")
+
 	// Change to the temp directory
 	origDir, _ := os.Getwd()
 	os.Chdir(tmpDir)
