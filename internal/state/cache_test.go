@@ -991,3 +991,267 @@ func TestNeedsSyncIntegration(t *testing.T) {
 		t.Error("plan should not need sync immediately after marking synced")
 	}
 }
+
+func TestLookupPlan_ByPlanID(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	p := &plan.Plan{
+		ID:         "PLAN-12345",
+		Title:      "Test Plan",
+		IssueID:    "NUM-100",
+		RawContent: "---\nid: PLAN-12345\ntitle: Test Plan\nstatus: draft\nauthor: test\n---\n# Test\n## Problem Statement\nP\n## Proposed Solution\nS\n",
+	}
+
+	if err := cache.SavePlan(p); err != nil {
+		t.Fatalf("SavePlan() error = %v", err)
+	}
+
+	// Look up by plan ID
+	result, err := cache.LookupPlan("PLAN-12345")
+	if err != nil {
+		t.Fatalf("LookupPlan() error = %v", err)
+	}
+
+	if result.ByPlanID == nil {
+		t.Error("expected ByPlanID to be set")
+	}
+	if result.ByPlanID.ID != "PLAN-12345" {
+		t.Errorf("expected plan ID 'PLAN-12345', got %q", result.ByPlanID.ID)
+	}
+
+	// ByIssueID should be nil because PLAN-12345 != NUM-100
+	if result.ByIssueID != nil {
+		t.Error("expected ByIssueID to be nil when looking up by plan ID")
+	}
+
+	// No conflict
+	if result.HasConflict() {
+		t.Error("should not have conflict")
+	}
+
+	// Plan() should return the found plan
+	if result.Plan() == nil || result.Plan().ID != "PLAN-12345" {
+		t.Error("Plan() should return the found plan")
+	}
+}
+
+func TestLookupPlan_ByIssueID(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	p := &plan.Plan{
+		ID:         "PLAN-12345",
+		Title:      "Test Plan",
+		IssueID:    "NUM-100",
+		RawContent: "---\nid: PLAN-12345\ntitle: Test Plan\nstatus: draft\nauthor: test\n---\n# Test\n## Problem Statement\nP\n## Proposed Solution\nS\n",
+	}
+
+	if err := cache.SavePlan(p); err != nil {
+		t.Fatalf("SavePlan() error = %v", err)
+	}
+
+	// Look up by issue ID
+	result, err := cache.LookupPlan("NUM-100")
+	if err != nil {
+		t.Fatalf("LookupPlan() error = %v", err)
+	}
+
+	// ByPlanID should be nil (no file named NUM-100.json)
+	if result.ByPlanID != nil {
+		t.Error("expected ByPlanID to be nil when looking up by issue ID")
+	}
+
+	// ByIssueID should be set
+	if result.ByIssueID == nil {
+		t.Error("expected ByIssueID to be set")
+	}
+	if result.ByIssueID.ID != "PLAN-12345" {
+		t.Errorf("expected plan ID 'PLAN-12345', got %q", result.ByIssueID.ID)
+	}
+
+	// No conflict
+	if result.HasConflict() {
+		t.Error("should not have conflict")
+	}
+
+	// Plan() should return the found plan
+	if result.Plan() == nil || result.Plan().ID != "PLAN-12345" {
+		t.Error("Plan() should return the found plan")
+	}
+}
+
+func TestLookupPlan_Conflict(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Create a plan with ID "NUM-100"
+	p1 := &plan.Plan{
+		ID:         "NUM-100",
+		Title:      "Plan with ID NUM-100",
+		IssueID:    "NUM-200",
+		RawContent: "---\nid: NUM-100\ntitle: Plan with ID NUM-100\nstatus: draft\nauthor: test\n---\n# Test\n## Problem Statement\nP1\n## Proposed Solution\nS1\n",
+	}
+
+	// Create another plan that links to issue "NUM-100"
+	p2 := &plan.Plan{
+		ID:         "PLAN-99999",
+		Title:      "Plan linking to NUM-100",
+		IssueID:    "NUM-100",
+		RawContent: "---\nid: PLAN-99999\ntitle: Plan linking to NUM-100\nstatus: draft\nauthor: test\n---\n# Test\n## Problem Statement\nP2\n## Proposed Solution\nS2\n",
+	}
+
+	if err := cache.SavePlan(p1); err != nil {
+		t.Fatalf("SavePlan(p1) error = %v", err)
+	}
+	if err := cache.SavePlan(p2); err != nil {
+		t.Fatalf("SavePlan(p2) error = %v", err)
+	}
+
+	// Look up "NUM-100" - should find both plans
+	result, err := cache.LookupPlan("NUM-100")
+	if err != nil {
+		t.Fatalf("LookupPlan() error = %v", err)
+	}
+
+	// Both should be set
+	if result.ByPlanID == nil {
+		t.Error("expected ByPlanID to be set")
+	}
+	if result.ByIssueID == nil {
+		t.Error("expected ByIssueID to be set")
+	}
+
+	// They should be different plans
+	if result.ByPlanID.ID == result.ByIssueID.ID {
+		t.Error("expected different plans for conflict scenario")
+	}
+
+	// Should have conflict
+	if !result.HasConflict() {
+		t.Error("should have conflict when both match different plans")
+	}
+
+	// Plan() should return nil on conflict
+	if result.Plan() != nil {
+		t.Error("Plan() should return nil on conflict")
+	}
+}
+
+func TestLookupPlan_NotFound(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	result, err := cache.LookupPlan("nonexistent")
+	if err != nil {
+		t.Fatalf("LookupPlan() error = %v", err)
+	}
+
+	if result.ByPlanID != nil {
+		t.Error("expected ByPlanID to be nil for nonexistent")
+	}
+	if result.ByIssueID != nil {
+		t.Error("expected ByIssueID to be nil for nonexistent")
+	}
+	if result.HasConflict() {
+		t.Error("should not have conflict when nothing found")
+	}
+	if result.Plan() != nil {
+		t.Error("Plan() should return nil when nothing found")
+	}
+}
+
+func TestLookupPlan_SamePlanByBothMethods(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "jig-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, subdir := range []string{"plans", "issues"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, subdir), 0755); err != nil {
+			t.Fatalf("failed to create cache subdir: %v", err)
+		}
+	}
+
+	cache := &Cache{dir: tmpDir}
+
+	// Create a plan where ID equals IssueID
+	p := &plan.Plan{
+		ID:         "NUM-100",
+		Title:      "Plan where ID equals IssueID",
+		IssueID:    "NUM-100",
+		RawContent: "---\nid: NUM-100\ntitle: Plan where ID equals IssueID\nstatus: draft\nauthor: test\n---\n# Test\n## Problem Statement\nP\n## Proposed Solution\nS\n",
+	}
+
+	if err := cache.SavePlan(p); err != nil {
+		t.Fatalf("SavePlan() error = %v", err)
+	}
+
+	result, err := cache.LookupPlan("NUM-100")
+	if err != nil {
+		t.Fatalf("LookupPlan() error = %v", err)
+	}
+
+	// Both should find the same plan
+	if result.ByPlanID == nil || result.ByIssueID == nil {
+		t.Error("expected both to be set")
+	}
+	if result.ByPlanID.ID != result.ByIssueID.ID {
+		t.Error("expected same plan for both methods")
+	}
+
+	// Should NOT have conflict (same plan)
+	if result.HasConflict() {
+		t.Error("should not have conflict when both find the same plan")
+	}
+
+	// Plan() should return the plan
+	if result.Plan() == nil || result.Plan().ID != "NUM-100" {
+		t.Error("Plan() should return the found plan")
+	}
+}

@@ -119,8 +119,8 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Show plan info from cache
-	plan, _ := state.DefaultCache.GetPlan(issueID)
+	// Show plan info from cache (supports both plan ID and issue ID)
+	plan, _, _ := lookupPlanByID(issueID)
 	if plan != nil {
 		fmt.Println()
 		fmt.Println("## Plan")

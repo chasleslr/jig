@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -97,11 +96,15 @@ func runImplement(cmd *cobra.Command, args []string) error {
 	} else {
 		issueID = args[0]
 
-		// Try to get plan from cache first
+		// Look up plan by both plan ID and issue ID
 		var err error
-		p, err = state.DefaultCache.GetPlan(issueID)
+		p, _, err = lookupPlanByID(issueID)
 		if err != nil {
 			printWarning(fmt.Sprintf("Could not read cached plan: %v", err))
+		}
+		// Update issueID to the actual issue ID from the selected plan
+		if p != nil && p.IssueID != "" {
+			issueID = p.IssueID
 		}
 
 		// If not in cache, try to fetch from tracker
@@ -109,15 +112,25 @@ func runImplement(cmd *cobra.Command, args []string) error {
 			printInfo(fmt.Sprintf("Fetching plan for %s...", issueID))
 			t, err := getTracker(cfg)
 			if err != nil {
-				printWarning(fmt.Sprintf("Could not connect to tracker: %v", err))
-			} else {
-				issue, err := t.GetIssue(ctx, issueID)
+				return fmt.Errorf("plan not found in cache and could not connect to tracker: %w", err)
+			}
+
+			// Try to fetch a full plan from issue comments
+			if fetcher, ok := t.(tracker.PlanFetcher); ok {
+				fetchedPlan, err := fetcher.FetchPlanFromIssue(ctx, issueID)
 				if err != nil {
-					printWarning(fmt.Sprintf("Could not fetch issue: %v", err))
-				} else {
-					// Create a minimal plan from the issue
-					p = createPlanFromIssue(issue)
+					printWarning(fmt.Sprintf("Could not fetch plan from comments: %v", err))
+				} else if fetchedPlan != nil {
+					p = fetchedPlan
+					// Cache the plan for future use
+					if err := state.DefaultCache.SavePlan(p); err != nil {
+						printWarning(fmt.Sprintf("Could not cache plan: %v", err))
+					}
 				}
+			}
+
+			if p == nil {
+				return fmt.Errorf("no plan found for %s. Create one with 'jig plan' or 'jig new %s'", issueID, issueID)
 			}
 		}
 	}
@@ -262,20 +275,6 @@ func runImplement(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  3. Address feedback: jig review %s\n", issueID)
 
 	return nil
-}
-
-// createPlanFromIssue creates a minimal plan from a tracker issue
-func createPlanFromIssue(issue *tracker.Issue) *plan.Plan {
-	if issue == nil {
-		return nil
-	}
-
-	// Generate a local plan ID, link to the issue via IssueID
-	planID := fmt.Sprintf("PLAN-%d", time.Now().Unix())
-	p := plan.NewPlan(planID, issue.Title, issue.Assignee)
-	p.IssueID = issue.Identifier
-	p.ProblemStatement = issue.Description
-	return p
 }
 
 // getLinearSyncer creates a Linear client that implements TrackerSyncer.

@@ -136,10 +136,10 @@ func runReview(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize state: %w", err)
 	}
 
-	// Try to get plan from cache
+	// Try to get plan from cache (supports both plan ID and issue ID)
 	var p interface{}
 	if issueID != "" {
-		if plan, err := state.DefaultCache.GetPlan(issueID); err == nil && plan != nil {
+		if plan, _, err := lookupPlanByID(issueID); err == nil && plan != nil {
 			p = plan
 		}
 	}
