@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 
+	"github.com/charleslr/jig/internal/config"
 	"github.com/charleslr/jig/internal/plan"
 	"github.com/charleslr/jig/internal/state"
+	"github.com/charleslr/jig/internal/tracker"
 	"github.com/charleslr/jig/internal/ui"
 )
 
@@ -50,4 +53,65 @@ func lookupPlanByID(id string) (*plan.Plan, string, error) {
 		return nil, "", nil
 	}
 	return p, p.ID, nil
+}
+
+// LookupPlanOptions configures plan lookup behavior
+type LookupPlanOptions struct {
+	FetchFromRemote bool
+	Config          *config.Config
+	Context         context.Context
+	// TrackerGetter is an optional function to get the tracker. If nil, uses getTracker.
+	// This is primarily used for testing.
+	TrackerGetter func(*config.Config) (tracker.Tracker, error)
+}
+
+// lookupPlanByIDWithFallback looks up a plan with optional remote fallback.
+// If the plan is not found in the local cache and FetchFromRemote is enabled,
+// it attempts to fetch from the remote tracker (e.g., Linear) and caches the result.
+func lookupPlanByIDWithFallback(id string, opts *LookupPlanOptions) (*plan.Plan, string, error) {
+	// 1. Try local cache first
+	p, planID, err := lookupPlanByID(id)
+	if err != nil {
+		return nil, "", err
+	}
+
+	// 2. Return if found or if remote fallback is disabled
+	if p != nil || opts == nil || !opts.FetchFromRemote {
+		return p, planID, nil
+	}
+
+	// 3. Attempt remote fetch
+	printInfo(fmt.Sprintf("Fetching plan for %s...", id))
+
+	// Use injected tracker getter if provided (for testing), otherwise use default
+	trackerGetter := opts.TrackerGetter
+	if trackerGetter == nil {
+		trackerGetter = getTracker
+	}
+
+	t, err := trackerGetter(opts.Config)
+	if err != nil {
+		return nil, "", fmt.Errorf("could not connect to tracker: %w", err)
+	}
+
+	fetcher, ok := t.(tracker.PlanFetcher)
+	if !ok {
+		return nil, "", nil // Tracker doesn't support plan fetching
+	}
+
+	fetchedPlan, err := fetcher.FetchPlanFromIssue(opts.Context, id)
+	if err != nil {
+		return nil, "", fmt.Errorf("could not fetch plan: %w", err)
+	}
+
+	if fetchedPlan == nil {
+		return nil, "", nil // Not found remotely either
+	}
+
+	// 4. Cache the fetched plan
+	if err := state.DefaultCache.SavePlan(fetchedPlan); err != nil {
+		printWarning(fmt.Sprintf("Could not cache plan: %v", err))
+	}
+
+	return fetchedPlan, fetchedPlan.ID, nil
 }

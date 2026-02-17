@@ -84,11 +84,16 @@ func TestImplement_NoPlanError(t *testing.T) {
 
 	// Try to implement a non-existent plan
 	// Without a plan cached or on the tracker, this should fail
+	// With remote fallback, it will first try to fetch from tracker
 	result := env.RunJig("implement", "--no-launch", "NONEXISTENT-001")
 
 	// The command should fail because no plan exists
+	// Accept either "no plan found" (when tracker returns nil) or tracker error (when tracker not configured)
 	env.AssertFailure(result)
-	env.AssertOutputContains(result, "plan not found")
+	combinedOutput := result.Stdout + result.Stderr
+	if !strings.Contains(combinedOutput, "no plan found") && !strings.Contains(combinedOutput, "tracker") && !strings.Contains(combinedOutput, "failed to load plan") {
+		t.Errorf("expected output to contain 'no plan found' or 'tracker' or 'failed to load plan', got:\n%s", combinedOutput)
+	}
 }
 
 func TestImplement_OutputsWorktreePath(t *testing.T) {

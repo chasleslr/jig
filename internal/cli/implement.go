@@ -11,7 +11,6 @@ import (
 	"github.com/charleslr/jig/internal/plan"
 	"github.com/charleslr/jig/internal/runner"
 	"github.com/charleslr/jig/internal/state"
-	"github.com/charleslr/jig/internal/tracker"
 	"github.com/charleslr/jig/internal/tracker/linear"
 	"github.com/charleslr/jig/internal/ui"
 )
@@ -96,42 +95,23 @@ func runImplement(cmd *cobra.Command, args []string) error {
 	} else {
 		issueID = args[0]
 
-		// Look up plan by both plan ID and issue ID
+		// Look up plan by both plan ID and issue ID, with remote fallback
 		var err error
-		p, _, err = lookupPlanByID(issueID)
+		p, _, err = lookupPlanByIDWithFallback(issueID, &LookupPlanOptions{
+			FetchFromRemote: true,
+			Config:          cfg,
+			Context:         ctx,
+		})
 		if err != nil {
-			printWarning(fmt.Sprintf("Could not read cached plan: %v", err))
+			return fmt.Errorf("failed to load plan: %w", err)
 		}
 		// Update issueID to the actual issue ID from the selected plan
 		if p != nil && p.IssueID != "" {
 			issueID = p.IssueID
 		}
 
-		// If not in cache, try to fetch from tracker
 		if p == nil {
-			printInfo(fmt.Sprintf("Fetching plan for %s...", issueID))
-			t, err := getTracker(cfg)
-			if err != nil {
-				return fmt.Errorf("plan not found in cache and could not connect to tracker: %w", err)
-			}
-
-			// Try to fetch a full plan from issue comments
-			if fetcher, ok := t.(tracker.PlanFetcher); ok {
-				fetchedPlan, err := fetcher.FetchPlanFromIssue(ctx, issueID)
-				if err != nil {
-					printWarning(fmt.Sprintf("Could not fetch plan from comments: %v", err))
-				} else if fetchedPlan != nil {
-					p = fetchedPlan
-					// Cache the plan for future use
-					if err := state.DefaultCache.SavePlan(p); err != nil {
-						printWarning(fmt.Sprintf("Could not cache plan: %v", err))
-					}
-				}
-			}
-
-			if p == nil {
-				return fmt.Errorf("no plan found for %s. Create one with 'jig plan' or 'jig new %s'", issueID, issueID)
-			}
+			return fmt.Errorf("no plan found for %s. Create one with 'jig plan' or 'jig new %s'", issueID, issueID)
 		}
 	}
 
