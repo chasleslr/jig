@@ -278,9 +278,156 @@ func TestLookupPlanByIDWithFallback_TrackerNotConfigured(t *testing.T) {
 }
 
 func TestLookupPlanByIDWithFallback_TrackerDoesNotSupportPlanFetching(t *testing.T) {
-	// This test verifies behavior when tracker doesn't implement PlanFetcher
-	// Since we can't easily mock getTracker, we'll skip this as an integration test
-	t.Skip("requires mocking getTracker - covered by integration tests")
+	cleanup := setupTestCache(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	cfg := &config.Config{}
+
+	// Use a tracker that doesn't implement PlanFetcher
+	p, planID, err := lookupPlanByIDWithFallback("NON-EXISTENT", &LookupPlanOptions{
+		FetchFromRemote: true,
+		Config:          cfg,
+		Context:         ctx,
+		TrackerGetter: func(c *config.Config) (tracker.Tracker, error) {
+			return &mockNonPlanFetcherTracker{}, nil
+		},
+	})
+
+	// Should return nil without error (tracker just doesn't support plan fetching)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p != nil {
+		t.Error("expected nil plan when tracker doesn't support plan fetching")
+	}
+	if planID != "" {
+		t.Errorf("expected empty planID, got '%s'", planID)
+	}
+}
+
+func TestLookupPlanByIDWithFallback_RemoteFetchSuccess(t *testing.T) {
+	cleanup := setupTestCache(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	cfg := &config.Config{}
+
+	// Create a plan that the mock tracker will return
+	remotePlan := plan.NewPlan("REMOTE-PLAN", "Remote Plan", "remoteuser")
+	remotePlan.IssueID = "REMOTE-ISSUE"
+	remotePlan.ProblemStatement = "Remote problem"
+	remotePlan.ProposedSolution = "Remote solution"
+
+	// Use a mock tracker that returns a plan
+	p, planID, err := lookupPlanByIDWithFallback("REMOTE-ISSUE", &LookupPlanOptions{
+		FetchFromRemote: true,
+		Config:          cfg,
+		Context:         ctx,
+		TrackerGetter: func(c *config.Config) (tracker.Tracker, error) {
+			return &mockPlanFetcherTracker{plan: remotePlan}, nil
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("lookupPlanByIDWithFallback failed: %v", err)
+	}
+	if p == nil {
+		t.Fatal("expected plan to be fetched from remote")
+	}
+	if p.ID != "REMOTE-PLAN" {
+		t.Errorf("expected plan ID 'REMOTE-PLAN', got '%s'", p.ID)
+	}
+	if planID != "REMOTE-PLAN" {
+		t.Errorf("expected returned planID 'REMOTE-PLAN', got '%s'", planID)
+	}
+
+	// Verify the plan was cached
+	cachedPlan, err := state.DefaultCache.GetPlan("REMOTE-PLAN")
+	if err != nil {
+		t.Fatalf("failed to get cached plan: %v", err)
+	}
+	if cachedPlan == nil {
+		t.Error("expected plan to be cached after remote fetch")
+	}
+}
+
+func TestLookupPlanByIDWithFallback_RemoteFetchReturnsNil(t *testing.T) {
+	cleanup := setupTestCache(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	cfg := &config.Config{}
+
+	// Use a mock tracker that returns nil (plan not found)
+	p, planID, err := lookupPlanByIDWithFallback("NOT-FOUND", &LookupPlanOptions{
+		FetchFromRemote: true,
+		Config:          cfg,
+		Context:         ctx,
+		TrackerGetter: func(c *config.Config) (tracker.Tracker, error) {
+			return &mockPlanFetcherTracker{plan: nil}, nil
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p != nil {
+		t.Error("expected nil plan when remote returns nil")
+	}
+	if planID != "" {
+		t.Errorf("expected empty planID, got '%s'", planID)
+	}
+}
+
+func TestLookupPlanByIDWithFallback_RemoteFetchReturnsError(t *testing.T) {
+	cleanup := setupTestCache(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	cfg := &config.Config{}
+
+	// Use a mock tracker that returns an error
+	_, _, err := lookupPlanByIDWithFallback("ERROR-ISSUE", &LookupPlanOptions{
+		FetchFromRemote: true,
+		Config:          cfg,
+		Context:         ctx,
+		TrackerGetter: func(c *config.Config) (tracker.Tracker, error) {
+			return &mockPlanFetcherTracker{err: fmt.Errorf("API error: rate limited")}, nil
+		},
+	})
+
+	if err == nil {
+		t.Error("expected error when remote fetch fails")
+	}
+	if err != nil && !strings.Contains(err.Error(), "could not fetch plan") {
+		t.Errorf("expected 'could not fetch plan' error, got: %v", err)
+	}
+}
+
+func TestLookupPlanByIDWithFallback_TrackerGetterError(t *testing.T) {
+	cleanup := setupTestCache(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	cfg := &config.Config{}
+
+	// Use a tracker getter that returns an error
+	_, _, err := lookupPlanByIDWithFallback("ANY-ISSUE", &LookupPlanOptions{
+		FetchFromRemote: true,
+		Config:          cfg,
+		Context:         ctx,
+		TrackerGetter: func(c *config.Config) (tracker.Tracker, error) {
+			return nil, fmt.Errorf("failed to connect")
+		},
+	})
+
+	if err == nil {
+		t.Error("expected error when tracker getter fails")
+	}
+	if err != nil && !strings.Contains(err.Error(), "could not connect to tracker") {
+		t.Errorf("expected 'could not connect to tracker' error, got: %v", err)
+	}
 }
 
 func TestLookupPlanOptions(t *testing.T) {

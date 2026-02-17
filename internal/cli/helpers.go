@@ -60,6 +60,9 @@ type LookupPlanOptions struct {
 	FetchFromRemote bool
 	Config          *config.Config
 	Context         context.Context
+	// TrackerGetter is an optional function to get the tracker. If nil, uses getTracker.
+	// This is primarily used for testing.
+	TrackerGetter func(*config.Config) (tracker.Tracker, error)
 }
 
 // lookupPlanByIDWithFallback looks up a plan with optional remote fallback.
@@ -80,7 +83,13 @@ func lookupPlanByIDWithFallback(id string, opts *LookupPlanOptions) (*plan.Plan,
 	// 3. Attempt remote fetch
 	printInfo(fmt.Sprintf("Fetching plan for %s...", id))
 
-	t, err := getTracker(opts.Config)
+	// Use injected tracker getter if provided (for testing), otherwise use default
+	trackerGetter := opts.TrackerGetter
+	if trackerGetter == nil {
+		trackerGetter = getTracker
+	}
+
+	t, err := trackerGetter(opts.Config)
 	if err != nil {
 		return nil, "", fmt.Errorf("could not connect to tracker: %w", err)
 	}
